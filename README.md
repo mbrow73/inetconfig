@@ -44,7 +44,7 @@ The diagram below illustrates the chain of trust between the components and how 
     Client -- TLS_cert_Public_CA --> SaaS_WAF
     SaaS_WAF -- TLS_cert_Private_CA --> NGFW["NGFW"]
     NGFW -. trusts .-> n1["private PKI Root"]
-    NGFW --> n2["Backends"]
+    NGFW --  private PKI root_CA --> n2["Backends"]
 ```
 _Diagram: Chain of Trust._ **Clients trust the SaaS WAF’s certificate** because it is signed by a **Public CA** that is in their trust stores. The **WAF trusts the NGFW’s certificate** because it is issued by a **Private CA** whose root certificate is installed on the WAF. No mutual TLS is in place; trust is established through these one-way certificate validations at each hop.
 
