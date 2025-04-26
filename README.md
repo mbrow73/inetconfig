@@ -37,8 +37,15 @@ In this architecture, each TLS connection is anchored to a trusted Certificate A
 
 The diagram below illustrates the chain of trust between the components and how each entity trusts the next via the appropriate certificate authority:
 
-Plain textANTLR4BashCC#CSSCoffeeScriptCMakeDartDjangoDockerEJSErlangGitGoGraphQLGroovyHTMLJavaJavaScriptJSONJSXKotlinLaTeXLessLuaMakefileMarkdownMATLABMarkupObjective-CPerlPHPPowerShell.propertiesProtocol BuffersPythonRRubySass (Sass)Sass (Scss)SchemeSQLShellSwiftSVGTSXTypeScriptWebAssemblyYAMLXML`   mermaidCopyEditflowchart TB      Client[Client] -.->|trusts| PublicCA[Public CA Root]      SaaS_WAF[SaaS WAF] -.->|trusts| PrivateCA[Private CA Root]      SaaS_WAF -->|TLS cert (Public CA)| Client      NGFW[NGFW] -->|TLS cert (Private CA)| SaaS_WAF   `
-
+'''
+flowchart TB
+    Client["Client"] -. trusts .-> PublicCA["Public CA Root"]
+    SaaS_WAF["SaaS WAF"] -. trusts .-> PrivateCA["GCP Private CA Service Root"]
+    Client -- TLS_cert_Public_CA --> SaaS_WAF
+    SaaS_WAF -- TLS_cert_Private_CA --> NGFW["NGFW"]
+    NGFW -. trusts .-> n1["private PKI Root"]
+    NGFW --> n2["Backends"]
+'''
 _Diagram: Chain of Trust._ **Clients trust the SaaS WAF’s certificate** because it is signed by a **Public CA** that is in their trust stores. The **WAF trusts the NGFW’s certificate** because it is issued by a **Private CA** whose root certificate is installed on the WAF. No mutual TLS is in place; trust is established through these one-way certificate validations at each hop.
 
 Traffic Flow Explanation
