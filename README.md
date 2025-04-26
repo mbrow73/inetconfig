@@ -72,12 +72,12 @@ The secure traffic flow can be described step-by-step, showing how a request fro
 
 The following diagram summarizes the traffic flow through the major components:
 ```mermaid
-flowchart LR
+  flowchart LR
     Client[Client] -- TLS (443) --> WAF["SaaS WAF (TLS Termination)"]
     WAF -- TLS (443) --> NGFW["NGFW (TLS Inspection)"]
     NGFW -- TLS (pass-through) --> NLB["External L4 LB (No TLS Termination)"]
     NLB -- TLS --> Backend[Backend Servers]
-```mermaid
+```
 
 _Diagram: Traffic Flow._ **Step-by-step:** The client connects over HTTPS (TLS on port 443) to the SaaS WAF, which terminates TLS and inspects the request. The WAF then opens a new TLS connection to the NGFW, sending the request for further inspection. The NGFW, after decrypting and checking the traffic, forwards it via a **layer-4 pass-through load balancer** to one of the backend servers. The L4 load balancer does not decrypt or alter the traffic, preserving whatever state (encrypted or not) it had. The backend server finally processes the request and the response is sent back through the NGFW and WAF, following the same path in reverse, with encryption re-established on each respective segment.
 
