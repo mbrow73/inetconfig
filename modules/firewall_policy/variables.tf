@@ -1,67 +1,22 @@
-variable "env" {
-  description = "Environment name (e.g., dev, prod)"
-  type        = string
-  default     = "dev"
-}
-
-variable "org_id" {
-  description = "GCP organization ID"
-  type        = string
-  default     = ""
-}
-
-variable "trust_anchor_cert" {
-  description = "Trust anchor certificate for TLS inspection"
-  type        = string
-}
-
-variable "intermediate_ca_cert" {
-  description = "Trust anchor certificate for TLS inspection"
-  type        = string
-}
-
 variable "project_id" {
-  description = "GCP project ID for the TLS inspection policy"
+  description = "GCP project ID for the firewall policy"
   type        = string
-  default     = ""
 }
 
-variable "vpc_network_id" {
-  description = "The VPC network (self-link or ID) to attach the endpoint to"
+variable "policy_name" {
+  description = "Name of the firewall policy"
   type        = string
-  default     = ""
 }
 
-variable "zone" {
-  description = "Zone for the firewall endpoint (must match zone of workloads)"
+variable "security_profile_group_id" {
+  description = "ID of the security profile group to apply in rules"
   type        = string
-  default     = ""
 }
 
-variable "billing_project_id" {
-  description = "Billing project ID for the NGFW endpoint"
+variable "inet_vpc" {
+  description = "The target VPC network (self-link or name) to attach the policy"
   type        = string
-  default     = ""
 }
-
-variable "region" {
-  description = "Region for the TLS inspection policy (must be same as CA region)"
-  type        = string
-  default     = ""
-}
-
-variable "ca_organization" {
-  description = "Organization name for the CA"
-  type        = string
-  default     = ""
-}
-
-variable "ca_country_code" {
-  description = "Country code for the CA"
-  type        = string
-  default     = "US"
-}
-
 
 variable "inet_firewall_rules" {
   description = <<-EOT
