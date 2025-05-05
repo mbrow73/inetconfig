@@ -14,7 +14,7 @@ module "firewall_policy" {
       priority               = 1
       direction              = "INGRESS"
       action                 = "apply_security_profile_group"
-      security_profile_group = module.security_profiles.profile_group_id
+      security_profile_group = "organizations/2345678432/locations/global/securityProfileGroups/example-security-profile-group"
       enable_logging         = true
       src_ip_ranges          = ["0.0.0.0/0"]
       dest_ip_ranges         = ["0.0.0.0/0"]
