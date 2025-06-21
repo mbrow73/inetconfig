@@ -22,8 +22,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # 2️⃣ Parse the Issue into an array of rule objects,
-      #    emitting `request_id_reqid` to match the validator.
+      # 2️⃣ Parse the Issue into an array of rule objects
       - name: 📝 Parse issue into JSON
         id: parse
         uses: actions/github-script@v6
@@ -132,13 +131,13 @@ jobs:
         with:
           terraform_version: '1.5.0'
 
-      # 9️⃣ Inject rules into your tfvars file
+      # 9️⃣ Inject rules into your tfvars file (only on success)
       - name: ✍️ Inject rules into tfvars
         if: steps.validate.outputs.exit_code == '0'
         run: |
-          python3 scripts/add_firewall_rule.py parsed.json e1inetpolicy.auto.tfvars.json
+          python3 scripts/add_firewall_rule.py "$(cat parsed.json)" e1inetpolicy.auto.tfvars.json
 
-      # 🔟 Terraform fmt & validate
+      # 🔟 Terraform fmt & validate (only on success)
       - name: 🧹 Terraform fmt & validate
         if: steps.validate.outputs.exit_code == '0'
         env:
@@ -148,12 +147,12 @@ jobs:
           terraform fmt -recursive
           terraform validate
 
-      # 1️⃣1️⃣ Cleanup Terraform runtime files
+      # 1️⃣1️⃣ Cleanup Terraform runtime files (only on success)
       - name: 🗑️ Cleanup Terraform runtime files
         if: steps.validate.outputs.exit_code == '0'
         run: rm -rf .terraform .terraform.lock.hcl
 
-      # 1️⃣2️⃣ Create Pull Request for NetSec review
+      # 1️⃣2️⃣ Create Pull Request for NetSec review (only on success)
       - name: 🔀 Create PR for NetSec review
         if: steps.validate.outputs.exit_code == '0'
         uses: peter-evans/create-pull-request@v3
