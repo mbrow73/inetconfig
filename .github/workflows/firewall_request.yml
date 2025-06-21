@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: write       # for checkout & PR creation
-  issues:   write       # for commenting on issues
+  issues:   write       # for commenting on issues and closing them
   pull-requests: write  # for opening PRs
 
 jobs:
@@ -105,6 +105,20 @@ jobs:
               body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct and re-open this issue when ready.`
             });
 
+      # 5️⃣b Close the issue if validation failed
+      - name: 🛑 Close Issue on validation failure
+        if: steps.validate.outputs.exit_code != '0'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              state: 'closed'
+            });
+
       # 6️⃣ Skip the rest if validation failed
       - name: ⏭️ Skip remaining steps on validation error
         if: steps.validate.outputs.exit_code != '0'
@@ -165,3 +179,4 @@ jobs:
           title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).rules[0].request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).rules[0].protocol }}/${{ fromJson(steps.parse.outputs.result).rules[0].port_s }}"
           labels: firewall-rule,pending-review
           body: ${{ steps.build_pr_body.outputs.result }}
+
