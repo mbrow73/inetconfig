@@ -74,7 +74,7 @@ jobs:
       - name: 💾 Save parsed JSON
         run: echo '${{ steps.parse.outputs.result }}' > parsed.json
 
-      # 4️⃣ Run validation on each rule (job won’t abort here)
+      # 4️⃣ Run validation on each rule (with TFVAR path)
       - name: ✅ Run validation
         id: validate
         continue-on-error: true
@@ -82,9 +82,10 @@ jobs:
           set -o pipefail
           exit_code=0
           > validation.log
+          TFVARS_PATH="e1inetpolicy.auto.tfvars.json"
           while IFS= read -r rule; do
             echo "Validating rule: $rule" | tee -a validation.log
-            python3 scripts/validate_firewall_request.py "$rule" 2>&1 | tee -a validation.log || exit_code=1
+            python3 scripts/validate_firewall_request.py "$rule" "$TFVARS_PATH" 2>&1 | tee -a validation.log || exit_code=1
           done < <(jq -c '.rules[]' parsed.json)
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
         shell: bash
