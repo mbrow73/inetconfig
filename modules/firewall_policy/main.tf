@@ -16,11 +16,6 @@ resource "google_compute_network_firewall_policy_rule" "rule" {
   enable_logging   = each.value.enable_logging
   tls_inspect      = each.value.tls_inspect
 
-  # Only set the profile if the action requires it:
-  dynamic "security_profile_group" {
-    for_each = each.value.action == "apply_security_profile_group" ? [each.value.security_profile_group] : []
-    content  = security_profile_group.value
-  }
 
   # Match block for L4:
   match {

@@ -1,29 +1,29 @@
-variable "env" {
-  description = "Environment name (e.g., dev, prod)"
-  type        = string
-  default     = "dev"
-}
+#variable "env" {
+#  description = "Environment name (e.g., dev, prod)"
+#  type        = string
+#  default     = "dev"
+#}
+#
+#variable "org_id" {
+#  description = "GCP organization ID"
+#  type        = string
+#  default     = ""
+#}
 
-variable "org_id" {
-  description = "GCP organization ID"
-  type        = string
-  default     = ""
-}
-
-variable "trust_anchor_cert" {
-  description = "Trust anchor certificate for TLS inspection"
-  type        = string
-}
-
-variable "intermediate_ca_cert" {
-  description = "Trust anchor certificate for TLS inspection"
-  type        = string
-}
+#variable "trust_anchor_cert" {
+#  description = "Trust anchor certificate for TLS inspection"
+#  type        = string
+#}
+#
+#variable "intermediate_ca_cert" {
+#  description = "Trust anchor certificate for TLS inspection"
+#  type        = string
+#}
 
 variable "project_id" {
   description = "GCP project ID for the TLS inspection policy"
   type        = string
-  default     = ""
+  default     = "meta-episode-463418-i2"
 }
 
 variable "vpc_network_id" {
