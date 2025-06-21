@@ -4,8 +4,8 @@ about: Request one or more GCP Network Firewall Policy rules
 labels: ["firewall-request"]
 ---
 
-### Request ID (REQID)
-`REQ12345`  – unique per request
+### Request ID (REQID): REQXXXXXX
+
 
 ### Rules
 
