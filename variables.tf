@@ -94,3 +94,8 @@ variable "inet_firewall_rules" {
     tls_inspection         = bool
   }))
 }
+variable "credentials" {
+  description = "Path to the service account credentials JSON file"
+  type        = string
+  default     = ""
+}
