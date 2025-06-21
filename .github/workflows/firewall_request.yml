@@ -2,7 +2,7 @@ name: 🔒 Process Firewall Requests
 
 on:
   issues:
-    types: ["opened"]
+    types: [opened]
 
 permissions:
   contents: write
@@ -34,20 +34,25 @@ jobs:
           result-encoding: string
           script: |
             const strip = v =>
-              v.replace(/^`|`$/g,'').replace(/^(?:ex\.|e\.g\.)\s*/i,'').trim();
+              v.replace(/^`|`$/g, '')        // remove backtick wrappers
+               .replace(/^(?:ex\.|e\.g\.)\s*/i, '') // strip leading example text
+               .trim();
+
             const issue = context.payload.issue;
             if (!issue?.body) throw new Error("No issue body found");
             const lines = issue.body.split("\n").map(l => l.trim());
             const obj = {};
             for (let i = 0; i < lines.length; i++) {
-              if (!lines[i].startsWith("🔹")) continue;
-              const after = lines[i].replace(/^🔹\s*/, "");
+              const line = lines[i];
+              if (!line.startsWith("🔹")) continue;
+              const after = line.replace(/^🔹\s*/, "");
               let [rawKey, inlineVal] = after.split(/:\s*/, 2);
               rawKey = rawKey.replace(/:$/, "");
               const key = rawKey
                 .toLowerCase()
                 .replace(/[^a-z0-9]+/g, "_")
                 .replace(/_+$/,"");
+              
               let val = inlineVal ? strip(inlineVal) : "";
               if (!val) {
                 let j = i + 1;
@@ -66,7 +71,7 @@ jobs:
           set -o pipefail
           python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}' 2>&1 | tee validation.log
           exit_code=${PIPESTATUS[0]}
-          echo "::set-output name=exitcode::$exit_code"
+          echo "exitcode=$exit_code" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: 💬 Comment on validation failure
@@ -75,12 +80,13 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const errors = require('fs').readFileSync('validation.log','utf8');
+            const fs = require('fs');
+            const errors = fs.readFileSync('validation.log','utf8');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errors}\n\`\`\`\nPlease correct and re-open this issue when ready.`
+              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errors}\n\`\`\`\nPlease correct the fields and re-open this issue when ready.`
             });
 
       - name: 🛑 Halt on validation failure
@@ -101,8 +107,7 @@ jobs:
 
       - name: 🗑️ Cleanup Terraform runtime files
         run: |
-          rm -rf .terraform
-          rm -f .terraform.lock.hcl
+          rm -rf .terraform .terraform.lock.hcl
 
       - name: 🔀 Create PR for NetSec review
         uses: peter-evans/create-pull-request@v3
