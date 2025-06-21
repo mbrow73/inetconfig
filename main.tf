@@ -1,7 +1,7 @@
 # Configure the Google provider (authenticate and set project)
 provider "google" {
-  project = var.project_id
-  region  = var.region
+  project     = var.project_id
+  region      = var.region
   credentials = var.credentials
 }
 
