@@ -7,17 +7,21 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest
+    # Only run on issues labeled "firewall-request"
     if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
+      # 1. Checkout
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
 
+      # 2. Install Terraform CLI
       - name: ⚙️ Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: '1.5.0'
 
+      # 3. Parse the issue body into JSON fields (handles inline and two-line)
       - name: 📝 Parse issue into JSON
         id: parse
         uses: actions/github-script@v6
@@ -30,30 +34,47 @@ jobs:
 
             const lines = issue.body.split("\n").map(l => l.trim());
             const obj = {};
+
             for (let i = 0; i < lines.length; i++) {
-              const l = lines[i];
-              if (l.startsWith("🔹")) {
-                const rawKey = l.replace(/^🔹\s*/, "").replace(/:$/, "");
-                const key = rawKey
-                  .toLowerCase()
-                  .replace(/[^a-z0-9]+/g, "_")
-                  .replace(/_+$/,"");
+              const line = lines[i];
+              if (!line.startsWith("🔹")) continue;
+
+              // Strip bullet
+              const after = line.replace(/^🔹\s*/, "");
+              // Attempt inline split ("Key: value")
+              let [rawKey, inlineVal] = after.split(/:\s*/, 2);
+              rawKey = rawKey.replace(/:$/, "");  // drop trailing colon
+
+              // Normalize key → source_ip_s_or_cidr_s, etc.
+              const key = rawKey
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "_")
+                .replace(/_+$/,"");
+
+              // Determine value: prefer inlineVal, else next non-blank line
+              let val = inlineVal?.trim();
+              if (!val) {
                 let j = i + 1;
                 while (j < lines.length && lines[j] === "") j++;
-                if (j >= lines.length) throw new Error(`No value for ${rawKey}`);
-                obj[key] = lines[j];
+                if (j >= lines.length) throw new Error(`No value provided for "${rawKey}"`);
+                val = lines[j];
               }
+              obj[key] = val;
             }
+
             return JSON.stringify(obj);
 
+      # 4. Validate fields
       - name: ✅ Validate request fields
         run: |
           python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}'
 
+      # 5. Inject new rule into tfvars
       - name: ✍️ Inject rule into tfvars
         run: |
           python3 scripts/add_firewall_rule.py '${{ steps.parse.outputs.result }}' e1inetpolicy.auto.tfvars.json
 
+      # 6. Terraform format & validate
       - name: 🧹 Terraform fmt & validate
         env:
           TF_IN_AUTOMATION: true
@@ -62,6 +83,7 @@ jobs:
           terraform fmt -check -diff
           terraform validate
 
+      # 7. Create a PR for NetSec review
       - name: 🔀 Create PR for NetSec review
         uses: peter-evans/create-pull-request@v3
         with:
