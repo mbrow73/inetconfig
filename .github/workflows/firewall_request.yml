@@ -5,9 +5,9 @@ on:
     types: [opened, edited, reopened]
 
 permissions:
-  contents: write
-  issues:   write
-  pull-requests: write
+  contents: write       # for checkout & PR creation
+  issues:   write       # for commenting on issues
+  pull-requests: write  # for opening PRs
 
 jobs:
   process:
@@ -15,14 +15,15 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
-      # 1) Checkout code
+      # 1️⃣ Check out the repository
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # 2) Parse the issue into an array of rule objects
+      # 2️⃣ Parse the Issue into an array of rule objects,
+      #    emitting `request_id_reqid` to match the validator.
       - name: 📝 Parse issue into JSON
         id: parse
         uses: actions/github-script@v6
@@ -39,8 +40,8 @@ jobs:
               l => l.startsWith("🔹 Request ID") || l.startsWith("### Request ID")
             );
             if (!idLine) throw new Error("Missing Request ID");
-            const request_id = idLine.split(/:\s*/, 2)[1]?.trim();
-            if (!request_id) throw new Error("Empty Request ID");
+            const request_id_reqid = idLine.split(/:\s*/, 2)[1]?.trim();
+            if (!request_id_reqid) throw new Error("Empty Request ID");
 
             const rules = [];
             let current = null;
@@ -50,13 +51,11 @@ jobs:
               // start a new rule block
               if (/^####\s*Rule\s*\d+/.test(l)) {
                 if (current) rules.push(current);
-                current = { request_id };
+                current = { request_id_reqid };
                 continue;
               }
               if (!current) continue;
-
               if (l.startsWith("🔹")) {
-                // split into key/value but guard against missing colon
                 const parts = l.replace(/^🔹\s*/, "").split(/:\s*/, 2);
                 const rawKey = parts[0];
                 const rawVal = parts[1] ?? "";
@@ -72,26 +71,26 @@ jobs:
 
             return JSON.stringify({ rules });
 
-      # 3) Save parsed JSON for downstream steps
+      # 3️⃣ Persist the parsed payload to disk
       - name: 💾 Save parsed JSON
         run: echo '${{ steps.parse.outputs.result }}' > parsed.json
 
-      # 4) Validate each rule (job never aborts here)
+      # 4️⃣ Run validation on each rule (job won’t abort here)
       - name: ✅ Run validation
         id: validate
         continue-on-error: true
         run: |
           set -o pipefail
           exit_code=0
-          # loop through each compact JSON rule
+          > validation.log
           while IFS= read -r rule; do
-            echo "Validating rule: $rule"
-            python3 scripts/validate_firewall_request.py "$rule" || exit_code=1
+            echo "Validating rule: $rule" | tee -a validation.log
+            python3 scripts/validate_firewall_request.py "$rule" 2>&1 | tee -a validation.log || exit_code=1
           done < <(jq -c '.rules[]' parsed.json)
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
         shell: bash
 
-      # 5) On failure, post the error back to the Issue
+      # 5️⃣ If validation failed, comment back to the Issue
       - name: 💬 Comment on validation failure
         if: steps.validate.outputs.exit_code != '0'
         uses: actions/github-script@v6
@@ -101,23 +100,45 @@ jobs:
             const errs = require('fs').readFileSync('validation.log','utf8');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
-              repo: context.repo.repo,
+              repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct the issue and re-open when ready.`
+              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct and re-open this issue when ready.`
             });
 
-      # 6) Everything below only if validation succeeded
+      # 6️⃣ Skip the rest if validation failed
+      - name: ⏭️ Skip remaining steps on validation error
+        if: steps.validate.outputs.exit_code != '0'
+        run: echo "Validation errors detected; skipping Terraform & PR steps."
+
+      # 7️⃣ Build the PR body (only on success)
+      - name: ✨ Build PR body
+        if: steps.validate.outputs.exit_code == '0'
+        id: build_pr_body
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          result-encoding: string
+          script: |
+            const parsed = JSON.parse(`\${{ steps.parse.outputs.result }}`);
+            const lines = parsed.rules
+              .map((r,i) => `- Rule ${i+1}: ${r.source_ip_s_or_cidr_s} → ${r.destination_ip_s_or_cidr_s} on ${r.protocol}/${r.port_s}`)
+              .join("\n");
+            return `Auto-generated firewall rules for **${parsed.rules[0].request_id_reqid}**:\n\n${lines}\n\nCloses #${{ github.event.issue.number }}`;
+
+      # 8️⃣ Setup Terraform (only on success)
       - name: ⚙️ Setup Terraform
         if: steps.validate.outputs.exit_code == '0'
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: '1.5.0'
 
+      # 9️⃣ Inject rules into your tfvars file
       - name: ✍️ Inject rules into tfvars
         if: steps.validate.outputs.exit_code == '0'
         run: |
           python3 scripts/add_firewall_rule.py parsed.json e1inetpolicy.auto.tfvars.json
 
+      # 🔟 Terraform fmt & validate
       - name: 🧹 Terraform fmt & validate
         if: steps.validate.outputs.exit_code == '0'
         env:
@@ -127,19 +148,18 @@ jobs:
           terraform fmt -recursive
           terraform validate
 
+      # 1️⃣1️⃣ Cleanup Terraform runtime files
       - name: 🗑️ Cleanup Terraform runtime files
         if: steps.validate.outputs.exit_code == '0'
         run: rm -rf .terraform .terraform.lock.hcl
 
+      # 1️⃣2️⃣ Create Pull Request for NetSec review
       - name: 🔀 Create PR for NetSec review
         if: steps.validate.outputs.exit_code == '0'
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).rules[0].request_id }}
-          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).rules[0].request_id }} – ${{ fromJson(steps.parse.outputs.result).rules[0].protocol }}/${{ fromJson(steps.parse.outputs.result).rules[0].port_s }}"
+          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).rules[0].request_id_reqid }}
+          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).rules[0].request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).rules[0].protocol }}/${{ fromJson(steps.parse.outputs.result).rules[0].port_s }}"
           labels: firewall-rule,pending-review
-          body: |
-            Auto-generated firewall rules for **${{ fromJson(steps.parse.outputs.result).rules[0].request_id }}**:
-
-            ${{ steps.parse.outputs.result }}   # or build a prettier list in another step
+          body: ${{ steps.build_pr_body.outputs.result }}
