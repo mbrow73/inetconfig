@@ -2,7 +2,7 @@ name: 🔒 Process Firewall Requests
 
 on:
   issues:
-    types: [opened]
+    types: ["opened"]
 
 permissions:
   contents: write
@@ -40,15 +40,14 @@ jobs:
             const lines = issue.body.split("\n").map(l => l.trim());
             const obj = {};
             for (let i = 0; i < lines.length; i++) {
-              const line = lines[i];
-              if (!line.startsWith("🔹")) continue;
-
-              let [rawKey, inlineVal] = line.replace(/^🔹\s*/, "").split(/:\s*/, 2);
+              if (!lines[i].startsWith("🔹")) continue;
+              const after = lines[i].replace(/^🔹\s*/, "");
+              let [rawKey, inlineVal] = after.split(/:\s*/, 2);
               rawKey = rawKey.replace(/:$/, "");
-              const key = rawKey.toLowerCase()
+              const key = rawKey
+                .toLowerCase()
                 .replace(/[^a-z0-9]+/g, "_")
                 .replace(/_+$/,"");
-
               let val = inlineVal ? strip(inlineVal) : "";
               if (!val) {
                 let j = i + 1;
@@ -62,11 +61,12 @@ jobs:
 
       - name: ✅ Run validation
         id: validate
-        continue-on-error: true           # <— allow subsequent steps to run
+        continue-on-error: true
         run: |
           set -o pipefail
           python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}' 2>&1 | tee validation.log
-          echo "exitcode=$?" >> $GITHUB_OUTPUT
+          exit_code=${PIPESTATUS[0]}
+          echo "::set-output name=exitcode::$exit_code"
         shell: bash
 
       - name: 💬 Comment on validation failure
@@ -80,7 +80,7 @@ jobs:
               owner: context.repo.owner,
               repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `⚠️ **Validation failed**:\n\`\`\`\n${errors}\n\`\`\`\nPlease correct and re-open.`
+              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errors}\n\`\`\`\nPlease correct and re-open this issue when ready.`
             });
 
       - name: 🛑 Halt on validation failure
