@@ -7,12 +7,16 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest
-    # Only run if the issue has the `firewall-request` label
     if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
+
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.0'
 
       - name: 📝 Parse issue into JSON
         id: parse
@@ -21,29 +25,25 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
-            // Grab the issue object
             const issue = context.payload.issue;
-            if (!issue || !issue.body) {
-              throw new Error("No issue body found");
-            }
+            if (!issue?.body) throw new Error("No issue body found");
 
-            // Split lines and skip headings
-            const lines = issue.body
-              .split("\n")
-              .filter(l => l.trim() !== "" && !l.startsWith("###"));
-
+            const lines = issue.body.split("\n").map(l => l.trim());
             const obj = {};
-            for (let line of lines) {
-              const [rawKey, ...rest] = line.split(":");
-              if (!rest.length) continue;
-              const key = rawKey
-                .trim()
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "_")
-                .replace(/_+$/,"");
-              obj[key] = rest.join(":").trim();
+            for (let i = 0; i < lines.length; i++) {
+              const l = lines[i];
+              if (l.startsWith("🔹")) {
+                const rawKey = l.replace(/^🔹\s*/, "").replace(/:$/, "");
+                const key = rawKey
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "_")
+                  .replace(/_+$/,"");
+                let j = i + 1;
+                while (j < lines.length && lines[j] === "") j++;
+                if (j >= lines.length) throw new Error(`No value for ${rawKey}`);
+                obj[key] = lines[j];
+              }
             }
-
             return JSON.stringify(obj);
 
       - name: ✅ Validate request fields
@@ -66,17 +66,16 @@ jobs:
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id }}
-          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).ports }}"
+          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id_reqid }}
+          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).port_s }}"
           labels: firewall-rule,pending-review
           body: |
-            Auto-generated firewall rule for **${{ fromJson(steps.parse.outputs.result).request_id }}**
+            Auto-generated firewall rule for **${{ fromJson(steps.parse.outputs.result).request_id_reqid }}**
 
-            - **Source:** ${{ fromJson(steps.parse.outputs.result).source_ip_s_or_cidrs }}
-            - **Destination:** ${{ fromJson(steps.parse.outputs.result).destination_ip_s_or_cidrs }}
-            - **Port(s):** ${{ fromJson(steps.parse.outputs.result).ports }}
+            - **Source:** ${{ fromJson(steps.parse.outputs.result).source_ip_s_or_cidr_s }}
+            - **Destination:** ${{ fromJson(steps.parse.outputs.result).destination_ip_s_or_cidr_s }}
+            - **Port(s):** ${{ fromJson(steps.parse.outputs.result).port_s }}
             - **Protocol:** ${{ fromJson(steps.parse.outputs.result).protocol }}
             - **Direction:** ${{ fromJson(steps.parse.outputs.result).direction }}
 
             Closes #${{ github.event.issue.number }}
-
