@@ -15,6 +15,7 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
+
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
         with:
@@ -30,35 +31,42 @@ jobs:
           script: |
             const issue = context.payload.issue;
             if (!issue?.body) throw new Error("No issue body found");
-            const lines = issue.body.split("\n").map(l=>l.trim());
+            const lines = issue.body.split("\n").map(l => l.trim());
             const obj = {};
-            for(let i=0;i<lines.length;i++){
-              if(!lines[i].startsWith("🔹")) continue;
-              const after = lines[i].replace(/^🔹\s*/,"");
-              let [rawKey, inlineVal] = after.split(/:\s*/,2);
-              rawKey=rawKey.replace(/:$/,"");
-              const key = rawKey.toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/_+$/,"");
-              let val = inlineVal?.trim()||"";
-              if(!val){
-                let j=i+1; while(j<lines.length && !lines[j]) j++;
-                if(j>=lines.length) throw new Error(`No value for "${rawKey}"`);
-                val = lines[j];
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+              if (!line.startsWith("🔹")) continue;
+              const after = line.replace(/^🔹\s*/, "");
+              let [rawKey, inlineVal] = after.split(/:\s*/, 2);
+              rawKey = rawKey.replace(/:$/, "");
+              const key = rawKey
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "_")
+                .replace(/_+$/,"");
+              let val = inlineVal?.trim() || "";
+              if (!val) {
+                let j = i+1;
+                while (j < lines.length && !lines[j]) j++;
+                if (j >= lines.length) throw new Error(`No value provided for "${rawKey}"`);
+                val = lines[j].trim();
               }
-              obj[key]=val;
+              obj[key] = val;
             }
             return JSON.stringify(obj);
 
-      - name: ✅ Validate request fields
+      - name: ✅ Run validation
         id: validate
         continue-on-error: true
         run: |
           set -o pipefail
-          python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}' 2>&1 | tee validation.log
-          echo "exitcode=$?" >> $GITHUB_OUTPUT
+          python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}' \
+            2>&1 | tee validation.log
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: 💬 Comment on validation failure
-        if: steps.validate.outputs.exitcode != '0'
+        if: steps.validate.outputs.exit_code != '0'
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -68,23 +76,29 @@ jobs:
               owner: context.repo.owner,
               repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `⚠️ **Validation failed**:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct and then re-open this issue when ready.`
+              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease fix the issue and **re-open** when ready.`
             });
 
-      # Only run these if validation passed
-      - name: ⚙️ Setup Terraform & Inject & PR
-        if: steps.validate.outputs.exitcode == '0'
-        run: |
-          # Terraform setup
-          echo "Injecting rule and opening PR…"
-        # Expand into your existing steps:
+      # Stop here if validation failed (but exit 0 so Issue stays open)
+      - name: ⏭️ Skip remaining on failure
+        if: steps.validate.outputs.exit_code != '0'
+        run: echo "Validation failed – skipping injection & PR."
+
+      # Everything below only runs if validation passed
+      - name: ⚙️ Setup Terraform
+        if: steps.validate.outputs.exit_code == '0'
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.0'
+
       - name: ✍️ Inject rule into tfvars
-        if: steps.validate.outputs.exitcode == '0'
+        if: steps.validate.outputs.exit_code == '0'
         run: |
-          python3 scripts/add_firewall_rule.py '${{ steps.parse.outputs.result }}' e1inetpolicy.auto.tfvars.json
+          python3 scripts/add_firewall_rule.py '${{ steps.parse.outputs.result }}' \
+            e1inetpolicy.auto.tfvars.json
 
       - name: 🧹 Terraform fmt & validate
-        if: steps.validate.outputs.exitcode == '0'
+        if: steps.validate.outputs.exit_code == '0'
         env:
           TF_IN_AUTOMATION: true
         run: |
@@ -93,12 +107,12 @@ jobs:
           terraform validate
 
       - name: 🗑️ Cleanup Terraform runtime files
-        if: steps.validate.outputs.exitcode == '0'
+        if: steps.validate.outputs.exit_code == '0'
         run: |
           rm -rf .terraform .terraform.lock.hcl
 
       - name: 🔀 Create PR for NetSec review
-        if: steps.validate.outputs.exitcode == '0'
+        if: steps.validate.outputs.exit_code == '0'
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
