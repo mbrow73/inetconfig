@@ -1,0 +1,65 @@
+name: 🔒 Process Firewall Requests
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'firewall-request')
+
+    steps:
+    - name: ⬇️ Checkout
+      uses: actions/checkout@v3
+
+    - name: 📝 Parse issue into JSON
+      id: parse
+      uses: actions/github-script@v6
+      with:
+        result-encoding: string
+        script: |
+          const body = github.event.issue.body.split('\n')
+            .filter(l => l.includes('###') === false && l.trim() !== '');
+          let obj = {};
+          for (let line of body) {
+            const [key, ...rest] = line.split(':');
+            obj[key.trim()
+                  .toLowerCase()
+                  .replace(/ /g,'_')
+                  .replace(/\(.*\)/,'')
+                ] = rest.join(':').trim();
+          }
+          return JSON.stringify(obj);
+
+    - name: ✅ Validate request fields
+      run: |
+        python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}'
+    
+    - name: ✍️ Inject rule into tfvars
+      run: |
+        python3 scripts/add_firewall_rule.py '${{ steps.parse.outputs.result }}' e1inetpolicy.auto.tfvars.json
+
+    - name: 🧹 Terraform fmt & validate
+      env:
+        TF_IN_AUTOMATION: true
+      run: |
+        terraform init -backend=false
+        terraform fmt -check -diff
+        terraform validate
+
+    - name: 🔀 Create PR for NetSec review
+      uses: peter-evans/create-pull-request@v3
+      with:
+        branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id }}
+        title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).ports }}"
+        labels: firewall-rule,pending-review
+        body: |
+          Auto-generated firewall rule for **${{ fromJson(steps.parse.outputs.result).request_id }}**  
+          - **Source:** ${{ fromJson(steps.parse.outputs.result).source_ip_s_or_cidrs }}  
+          - **Destination:** ${{ fromJson(steps.parse.outputs.result).destination_ip_s_or_cidrs }}  
+          - **Port(s):** ${{ fromJson(steps.parse.outputs.result).ports }}  
+          - **Protocol:** ${{ fromJson(steps.parse.outputs.result).protocol }}  
+          - **Direction:** ${{ fromJson(steps.parse.outputs.result).direction }}  
+
+          Closes #${{ github.event.issue.number }}
