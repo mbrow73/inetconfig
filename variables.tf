@@ -47,7 +47,7 @@ variable "billing_project_id" {
 variable "region" {
   description = "Region for the TLS inspection policy (must be same as CA region)"
   type        = string
-  default     = ""
+  default     = "us-central1"
 }
 
 variable "ca_organization" {

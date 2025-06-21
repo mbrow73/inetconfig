@@ -46,6 +46,6 @@ variable "inet_firewall_rules" {
     dest_ip_ranges         = list(string)
     ports                  = list(string)
     protocol               = string
-    tls_inspection         = optional(bool)
+    tls_inspect            = optional(bool)
   }))
 }
