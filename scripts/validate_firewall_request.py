@@ -6,44 +6,46 @@ def die(msg):
     print(f"❌ Validation error: {msg}")
     sys.exit(1)
 
+# Load the parsed-issue JSON (from the `parse` step)
 data = json.loads(sys.argv[1])
 
-# Required keys
+# ── 1) Required fields ────────────────────────────────────────────────────────
 required = [
-    "source_ip_s_or_cidrs",
-    "destination_ip_s_or_cidrs",
-    "ports",
+    "source_ip_s_or_cidr_s",
+    "destination_ip_s_or_cidr_s",
+    "port_s",
     "protocol",
     "direction",
     "business_justification",
-    "request_id"
+    "request_id_reqid"
 ]
-for k in required:
-    if k not in data or not data[k]:
-        die(f"Missing required field `{k}`")
+for key in required:
+    if key not in data or not data[key].strip():
+        die(f"Missing required field `{key}`")
 
-# Validate IP/CIDRs
-for field in ("source_ip_s_or_cidrs","destination_ip_s_or_cidrs"):
+# ── 2) Validate IP/CIDRs ──────────────────────────────────────────────────────
+for field in ("source_ip_s_or_cidr_s", "destination_ip_s_or_cidr_s"):
     for part in re.split(r'[,\s]+', data[field]):
         try:
             ip_network(part, strict=False)
         except Exception:
-            die(f"Invalid CIDR/IP `{part}` in {field}")
+            die(f"Invalid CIDR/IP `{part}` in `{field}`")
 
-# Validate ports
+# ── 3) Validate ports ──────────────────────────────────────────────────────────
 port_re = re.compile(r'^\d+(-\d+)?$')
-for p in re.split(r'[,\s]+', data["ports"]):
+for p in re.split(r'[,\s]+', data["port_s"]):
     if not port_re.match(p) or not (0 < int(p.split('-')[0]) <= 65535):
-        die(f"Invalid port or port range `{p}`")
+        die(f"Invalid port or range `{p}`")
 
-# Protocol & direction
-if data["protocol"].upper() not in ("TCP","UDP","ICMP"):
+# ── 4) Validate protocol & direction ──────────────────────────────────────────
+if data["protocol"].upper() not in ("TCP", "UDP", "ICMP"):
     die("Protocol must be TCP, UDP, or ICMP")
-if data["direction"].upper() not in ("INGRESS","EGRESS"):
+if data["direction"].upper() not in ("INGRESS", "EGRESS"):
     die("Direction must be INGRESS or EGRESS")
 
-# REQID format
-if not re.match(r'^REQ\d+$', data["request_id"]):
+# ── 5) Validate Request ID ────────────────────────────────────────────────────
+# The key is `request_id_reqid` (normalized from "Request ID (REQID)")
+if not re.match(r'^REQ\d+$', data["request_id_reqid"]):
     die("Request ID must follow REQ<digits>, e.g. REQ12345")
 
 print("✅ Validation passed")
