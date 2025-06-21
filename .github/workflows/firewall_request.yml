@@ -1,118 +1,83 @@
-name: 🔒 Process Firewall Requests
-
-# Grant write permissions to push branches & comment on issues
-permissions:
-  contents: write
-  issues:   write
-  pull-requests: write
+name: Firewall Rule Request Automation
 
 on:
   issues:
-    types: [opened]
+    types: [opened, edited, reopened]  # Trigger on new issues and when issues are edited:contentReference[oaicite:7]{index=7}
+
+permissions:
+  issues: write   # allow commenting on issues (and reading issue content)
 
 jobs:
-  process:
+  process-firewall-request:
     runs-on: ubuntu-latest
-    # Only run on issues labeled "firewall-request"
-    if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
-      # 1. Checkout using GITHUB_TOKEN (with full history)
-      - name: ⬇️ Checkout repo
+      - name: Check out repository
         uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
-      # 2. Install Terraform CLI
-      - name: ⚙️ Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: '1.5.0'
-
-      # 3. Parse the issue body into JSON fields
-      - name: 📝 Parse issue into JSON
-        id: parse
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          result-encoding: string
-          script: |
-            const issue = context.payload.issue;
-            if (!issue?.body) throw new Error("No issue body found");
-
-            const lines = issue.body.split("\n").map(l => l.trim());
-            const obj = {};
-
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i];
-              if (!line.startsWith("🔹")) continue;
-
-              // Strip bullet
-              const after = line.replace(/^🔹\s*/, "");
-              // Attempt inline split ("Key: value")
-              let [rawKey, inlineVal] = after.split(/:\s*/, 2);
-              rawKey = rawKey.replace(/:$/, "");  // drop trailing colon
-
-              // Normalize key → source_ip_s_or_cidr_s, etc.
-              const key = rawKey
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "_")
-                .replace(/_+$/,"");
-
-              // Determine value: prefer inlineVal, else next non-blank line
-              let val = inlineVal?.trim();
-              if (!val) {
-                let j = i + 1;
-                while (j < lines.length && lines[j] === "") j++;
-                if (j >= lines.length) throw new Error(No value provided for "${rawKey}");
-                val = lines[j];
-              }
-              obj[key] = val;
-            }
-
-            return JSON.stringify(obj);
-
-      # 4. Validate extracted fields
-      - name: ✅ Validate request fields
+      - name: Validate issue content
+        id: validate
         run: |
-          python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}'
+          # Run the validation script on the issue body
+          # (Modify this path or command as needed for your repo)
+          set +e
+          OUTPUT=$(python scripts/validate_firewall_request.py)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "$OUTPUT" > validation_error.txt   # save error message for comment
+          fi
+          # Print output (for logging)
+          echo "$OUTPUT"
+          exit $EXIT_CODE
+        continue-on-error: true
 
-      # 5. Inject new rule into your tfvars
-      - name: ✍️ Inject rule into tfvars
-        run: |
-          python3 scripts/add_firewall_rule.py '${{ steps.parse.outputs.result }}' e1inetpolicy.auto.tfvars.json
-
-      # 6. Terraform init, fmt, validate
-      - name: 🧹 Terraform fmt & validate
+      - name: Comment on issue if validation fails
+        # Runs only if the validation step failed
+        if: ${{ failure() && steps.validate.outcome == 'failure' }}
         env:
-          TF_IN_AUTOMATION: true
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          terraform init -backend=false
-          terraform fmt -recursive
-          terraform validate
+          echo "❌ **Validation Failed**. See details below:" > comment.md
+          echo '```' >> comment.md
+          cat validation_error.txt >> comment.md
+          echo '```' >> comment.md
+          # Post the comment using GitHub CLI
+          gh issue comment ${{ github.event.issue.number }} --body-file comment.md
+        # The above uses a temp file (comment.md) to preserve formatting of the message
 
-      # 7. *** Cleanup Terraform runtime files so we don’t commit them ***
-      - name: 🗑️ Cleanup Terraform runtime files
+      - name: Terraform Init
+        if: ${{ steps.validate.outcome == 'success' }}
+        run: terraform init
+
+      - name: Terraform Validate
+        if: ${{ steps.validate.outcome == 'success' }}
+        run: terraform validate
+
+      # (Optional) Generate/update Terraform config from issue if needed
+      # - name: Generate TF config from issue
+      #   if: ${{ steps.validate.outcome == 'success' }}
+      #   run: python scripts/generate_tf_from_issue.py
+
+      - name: Create Pull Request for Firewall Rule
+        if: ${{ steps.validate.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rm -rf .terraform
-          rm -f .terraform.lock.hcl
+          # Example using GitHub CLI to create a PR
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git checkout -b "firewall-rule-${{ github.event.issue.number }}"
+          # (Assume changes (e.g., Terraform files) are already made at this point)
+          git add .
+          git commit -m "Add firewall rule for issue #${{ github.event.issue.number }}"
+          git push -u origin "firewall-rule-${{ github.event.issue.number }}"
+          gh pr create \
+            --title "Firewall rule request from #${{ github.event.issue.number }}" \
+            --body "This PR implements the firewall rule requested in issue #${{ github.event.issue.number }}." \
+            --label "firewall-rule"
 
-      # 8. Create the Pull Request for netsec review
-      - name: 🔀 Create PR for NetSec review
-        uses: peter-evans/create-pull-request@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id_reqid }}
-          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).port_s }}"
-          labels: firewall-rule,pending-review
-          body: |
-            Auto-generated firewall rule for **${{ fromJson(steps.parse.outputs.result).request_id_reqid }}**
-
-            - **Source:** ${{ fromJson(steps.parse.outputs.result).source_ip_s_or_cidr_s }}
-            - **Destination:** ${{ fromJson(steps.parse.outputs.result).destination_ip_s_or_cidr_s }}
-            - **Port(s):** ${{ fromJson(steps.parse.outputs.result).port_s }}
-            - **Protocol:** ${{ fromJson(steps.parse.outputs.result).protocol }}
-            - **Direction:** ${{ fromJson(steps.parse.outputs.result).direction }}
-
-            Closes #${{ github.event.issue.number }}
+      - name: Mark workflow failed on validation error
+        if: ${{ steps.validate.outcome == 'failure' }}
+        run: exit 1
