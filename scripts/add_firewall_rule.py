@@ -1,51 +1,41 @@
-#!/usr/bin/env python3
 import sys, json
-from json.decoder import JSONDecodeError
+from ipaddress import ip_network
 
-# 1) Load & normalize the issue JSON
-raw   = json.loads(sys.argv[1])
-issue = { k.strip('_'): v for k, v in raw.items() }
+# 1) Load the parsed JSON
+data = json.loads(sys.argv[1])
+rules_in = data["rules"]
 
-# 2) Path to your auto-tfvars file (unchanged)
-tfpath = sys.argv[2]
+# 2) Load existing tfvars
+with open(sys.argv[2]) as f:
+    tfdata = json.load(f)
+tf_rules = tfdata.get("auto_firewall_rules", [])
 
-# 3) Load existing tfvars, or start fresh
-try:
-    with open(tfpath) as f:
-        data = json.load(f)
-        if not isinstance(data, dict):
-            data = {}
-except (JSONDecodeError, FileNotFoundError):
-    data = {}
+for idx, issue in enumerate(rules_in, start=1):
+    # compute priority
+    max_prio = max((r.get("priority",0) for r in tf_rules), default=1000)
+    prio = max_prio + 1
 
-# 4) Pull out the auto list (default to empty)
-rules = data.get("auto_firewall_rules")
-if not isinstance(rules, list):
-    rules = []
+    # build a unique rule name, e.g. REQ12345-1, REQ12345-2
+    name = f"{issue['request_id']}-{idx}"
 
-# 5) Compute next priority
-max_prio = max((r.get("priority", 0) for r in rules), default=1000)
-new_prio = max_prio + 1
+    new_rule = {
+        "name":             name,
+        "description":      issue["business_justification"],
+        "direction":        issue["direction"].upper(),
+        "src_ip_ranges":    [ip.strip() for ip in issue["source_ip_s_or_cidr_s"].split(",")],
+        "dest_ip_ranges":   [ip.strip() for ip in issue["destination_ip_s_or_cidr_s"].split(",")],
+        "protocol":         issue["protocol"].upper(),
+        "ports":            [p.strip() for p in issue["port_s"].split(",")],
+        "enable_logging":   True,
+        "action":           "allow",
+        "priority":         prio
+    }
 
-# 6) Build the new rule (no tls_inspection here)
-new_rule = {
-    "name":             issue["request_id_reqid"],
-    "description":      issue["business_justification"],
-    "direction":        issue["direction"].upper(),
-    "src_ip_ranges":    [ip.strip() for ip in issue["source_ip_s_or_cidr_s"].split(",")],
-    "dest_ip_ranges":   [ip.strip() for ip in issue["destination_ip_s_or_cidr_s"].split(",")],
-    "protocol":         issue["protocol"].upper(),
-    "ports":            [p.strip() for p in issue["port_s"].split(",")],
-    "enable_logging":   True,
-    "action":           "allow",
-    "priority":         new_prio
-}
+    tf_rules.append(new_rule)
 
-# 7) Append & write back under the auto_* key
-rules.append(new_rule)
-data["auto_firewall_rules"] = rules
+# 3) Write back
+tfdata["auto_firewall_rules"] = tf_rules
+with open(sys.argv[2], "w") as f:
+    json.dump(tfdata, f, indent=2)
 
-with open(tfpath, "w") as f:
-    json.dump(data, f, indent=2)
-
-print(f"✅ Appended rule {new_rule['name']} with priority {new_prio}")
+print(f"✅ Appended {len(rules_in)} rule(s) for {rules_in[0]['request_id']}")
