@@ -39,7 +39,7 @@ new_rule = {
     "enable_logging":   True,
     "action":           "allow",
     "priority":         new_prio
-    "tls_inspection":  False
+    "tls_inspect":  False
 }
 
 # 7) Append & write back under the auto_* key
