@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 import sys, json
 from json.decoder import JSONDecodeError
-from ipaddress import ip_network
 
 # 1) Load & normalize the issue JSON
-raw = json.loads(sys.argv[1])
+raw   = json.loads(sys.argv[1])
 issue = { k.strip('_'): v for k, v in raw.items() }
 
-# 2) Path to your tfvars file
+# 2) Path to your auto-tfvars file (unchanged)
 tfpath = sys.argv[2]
 
-# 3) Load existing tfvars (or initialize)
+# 3) Load existing tfvars, or start fresh
 try:
     with open(tfpath) as f:
         data = json.load(f)
@@ -19,16 +18,16 @@ try:
 except (JSONDecodeError, FileNotFoundError):
     data = {}
 
-# 4) Ensure the rules list exists
-rules = data.get("inet_firewall_rules")
+# 4) Pull out the auto list (default to empty)
+rules = data.get("auto_firewall_rules")
 if not isinstance(rules, list):
     rules = []
 
-# 5) Compute new priority
+# 5) Compute next priority
 max_prio = max((r.get("priority", 0) for r in rules), default=1000)
 new_prio = max_prio + 1
 
-# 6) Build the new rule, using normalized keys
+# 6) Build the new rule (no tls_inspection here)
 new_rule = {
     "name":             issue["request_id_reqid"],
     "description":      issue["business_justification"],
@@ -42,9 +41,9 @@ new_rule = {
     "priority":         new_prio
 }
 
-# 7) Append and persist
+# 7) Append & write back under the auto_* key
 rules.append(new_rule)
-data["inet_firewall_rules"] = rules
+data["auto_firewall_rules"] = rules
 
 with open(tfpath, "w") as f:
     json.dump(data, f, indent=2)

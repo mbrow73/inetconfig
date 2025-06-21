@@ -5,6 +5,13 @@ provider "google" {
   credentials = var.credentials
 }
 
+locals {
+  inet_firewall_rules = concat(
+    var.auto_firewall_rules,
+    var.manual_firewall_rules,
+  )
+}
+
 # Module: CA (Private CA pool and CA)
 #module "ca" {
 #  source          = "./modules/ca"
@@ -56,5 +63,5 @@ module "inet_firewall_policy" {
   inet_vpc                  = "projects/meta-episode-463418-i2/global/networks/default"
   security_profile_group_id = ""
   policy_name               = "inet-policy"
-  inet_firewall_rules       = var.inet_firewall_rules
+  inet_firewall_rules       = local.inet_firewall_rules
 }
