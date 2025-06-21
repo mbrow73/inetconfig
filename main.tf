@@ -2,6 +2,7 @@
 provider "google" {
   project = var.project_id
   region  = var.region
+  credentials = var.credentials
 }
 
 # Module: CA (Private CA pool and CA)

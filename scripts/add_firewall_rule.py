@@ -39,7 +39,6 @@ new_rule = {
     "ports":            [p.strip() for p in issue["port_s"].split(",")],
     "enable_logging":   True,
     "action":           "allow",
-    "tls_inspect":      False,
     "priority":         new_prio
 }
 
