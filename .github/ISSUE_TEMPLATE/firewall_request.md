@@ -1,6 +1,7 @@
 ---
 name: Firewall Rule Request
 about: Request a new GCP Network Firewall Policy rule
+labels: ["firewall-request"]
 ---
 
 ### 🔹 Source IP(s) or CIDR(s)
