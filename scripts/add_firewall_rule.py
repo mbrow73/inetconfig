@@ -3,11 +3,14 @@ import sys, json
 from json.decoder import JSONDecodeError
 from ipaddress import ip_network
 
-# 1) Load and normalize the issue JSON
-issue = json.loads(sys.argv[1])
+# 1) Load & normalize the issue JSON
+raw = json.loads(sys.argv[1])
+issue = { k.strip('_'): v for k, v in raw.items() }
+
+# 2) Path to your tfvars file
 tfpath = sys.argv[2]
 
-# 2) Load existing tfvars JSON, or initialize if empty/missing
+# 3) Load existing tfvars (or initialize)
 try:
     with open(tfpath) as f:
         data = json.load(f)
@@ -16,16 +19,16 @@ try:
 except (JSONDecodeError, FileNotFoundError):
     data = {}
 
-# 3) Ensure a list exists under the key
+# 4) Ensure the rules list exists
 rules = data.get("inet_firewall_rules")
 if not isinstance(rules, list):
     rules = []
 
-# 4) Compute next priority
+# 5) Compute new priority
 max_prio = max((r.get("priority", 0) for r in rules), default=1000)
 new_prio = max_prio + 1
 
-# 5) Build the new rule object
+# 6) Build the new rule, using normalized keys
 new_rule = {
     "name":             issue["request_id_reqid"],
     "description":      issue["business_justification"],
@@ -40,11 +43,11 @@ new_rule = {
     "priority":         new_prio
 }
 
-# 6) Append and write back
+# 7) Append and persist
 rules.append(new_rule)
 data["inet_firewall_rules"] = rules
 
 with open(tfpath, "w") as f:
     json.dump(data, f, indent=2)
 
-print(f"Appended rule {new_rule['name']} with priority {new_prio}")
+print(f"✅ Appended rule {new_rule['name']} with priority {new_prio}")
