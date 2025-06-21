@@ -5,9 +5,9 @@ on:
     types: [opened, edited, reopened]
 
 permissions:
-  contents: write
-  issues:   write
-  pull-requests: write
+  contents: write       # checkout & PR creation
+  issues:   write       # commenting on issues
+  pull-requests: write  # opening PRs
 
 jobs:
   process:
@@ -16,13 +16,13 @@ jobs:
 
     steps:
       # 1) Checkout
-      - name: ⬇️ Checkout code
+      - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # 2) Parse the issue body
+      # 2) Parse issue into an array of rules
       - name: 📝 Parse issue into JSON
         id: parse
         uses: actions/github-script@v6
@@ -31,44 +31,53 @@ jobs:
           result-encoding: string
           script: |
             const issue = context.payload.issue;
-            if (!issue?.body) throw new Error("No issue body found");
-            const lines = issue.body.split("\n").map(l => l.trim());
-            const obj = {};
-            for (let i = 0; i < lines.length; i++) {
-              if (!lines[i].startsWith("🔹")) continue;
-              const after = lines[i].replace(/^🔹\s*/, "");
-              let [rawKey, inlineVal] = after.split(/:\s*/, 2);
-              rawKey = rawKey.replace(/:$/, "");
-              const key = rawKey
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "_")
-                .replace(/_+$/,"");
-              let val = inlineVal?.trim() || "";
-              if (!val) {
-                let j = i + 1;
-                while (j < lines.length && !lines[j]) j++;
-                if (j >= lines.length) throw new Error(`No value for "${rawKey}"`);
-                val = lines[j];
+            if (!issue.body) throw new Error("No issue body found");
+            const lines = issue.body.split("\n");
+            // extract request_id
+            const idLine = lines.find(l=>l.startsWith("🔹 Request ID")||l.startsWith("### Request ID"));
+            if (!idLine) throw new Error("Missing Request ID");
+            const request_id = idLine.split(/:\s*/,2)[1].trim();
+            // collect each "#### Rule N" block
+            const rules = [];
+            let current = null;
+            for (let raw of lines) {
+              const l = raw.trim();
+              if (/^####\s*Rule\s*\d+/.test(l)) {
+                if (current) rules.push(current);
+                current = { request_id };
+                continue;
               }
-              obj[key] = val;
+              if (!current) continue;
+              if (l.startsWith("🔹")) {
+                let [k,v] = l.replace(/^🔹\s*/,"").split(/:\s*/,2);
+                const key = k.toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/_+$/,"");
+                current[key] = v.trim().replace(/^`|`$/g,"");
+              }
             }
-            return JSON.stringify(obj);
+            if (current) rules.push(current);
+            return JSON.stringify({ rules });
 
-      # 3) Save parsed JSON to a file
+      # 3) Save parsed JSON
       - name: 💾 Save parsed JSON
         run: echo '${{ steps.parse.outputs.result }}' > parsed.json
 
-      # 4) Validate fields (won't stop the job)
+      # 4) Validate each rule (never abort the job)
       - name: ✅ Run validation
         id: validate
         continue-on-error: true
         run: |
-          python3 scripts/validate_firewall_request.py "$(cat parsed.json)" 2>&1 | tee validation.log
+          set -o pipefail
+          exit_code=0
+          while IFS= read -r rule; do
+            echo "Validating $rule"
+            python3 scripts/validate_firewall_request.py "$rule" || exit_code=1
+          done < <(jq -c '.rules[]' parsed.json)
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
         shell: bash
 
-      # 5) If validation failed, comment on the issue
+      # 5) Comment errors back to the issue
       - name: 💬 Comment on validation failure
-        if: steps.validate.outcome == 'failure'
+        if: steps.validate.outputs.exit_code != '0'
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -78,23 +87,38 @@ jobs:
               owner: context.repo.owner,
               repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease fix your issue and re-open when ready.`
+              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease fix and re-open when ready.`
             });
 
-      # 6) Everything below only runs if validation succeeded
+      # 6) Build the PR body from parsed rules
+      - name: ✨ Build PR body
+        if: steps.validate.outputs.exit_code == '0'
+        id: build_pr_body
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          result-encoding: string
+          script: |
+            const parsed = JSON.parse('${{ steps.parse.outputs.result }}');
+            const lines = parsed.rules.map((r,i)=>
+              `- Rule ${i+1}: ${r.source_ip_s_or_cidr_s} → ${r.destination_ip_s_or_cidr_s} on ${r.protocol}/${r.port_s}`
+            ).join("\n");
+            return `Auto-generated firewall rules for **${parsed.rules[0].request_id}**:\n\n${lines}\n\nCloses #${{ github.event.issue.number }}`;
+
+      # 7) The rest only if validation passed
       - name: ⚙️ Setup Terraform
-        if: steps.validate.outcome == 'success'
+        if: steps.validate.outputs.exit_code == '0'
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: '1.5.0'
 
-      - name: ✍️ Inject rule into tfvars
-        if: steps.validate.outcome == 'success'
+      - name: ✍️ Inject rules into tfvars
+        if: steps.validate.outputs.exit_code == '0'
         run: |
-          python3 scripts/add_firewall_rule.py "$(cat parsed.json)" e1inetpolicy.auto.tfvars.json
+          python3 scripts/add_firewall_rule.py parsed.json e1inetpolicy.auto.tfvars.json
 
       - name: 🧹 Terraform fmt & validate
-        if: steps.validate.outcome == 'success'
+        if: steps.validate.outputs.exit_code == '0'
         env:
           TF_IN_AUTOMATION: true
         run: |
@@ -103,25 +127,15 @@ jobs:
           terraform validate
 
       - name: 🗑️ Cleanup Terraform runtime files
-        if: steps.validate.outcome == 'success'
-        run: |
-          rm -rf .terraform .terraform.lock.hcl
+        if: steps.validate.outputs.exit_code == '0'
+        run: rm -rf .terraform .terraform.lock.hcl
 
       - name: 🔀 Create PR for NetSec review
-        if: steps.validate.outcome == 'success'
+        if: steps.validate.outputs.exit_code == '0'
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id_reqid }}
-          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).port_s }}"
+          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).rules[0].request_id }}
+          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).rules[0].request_id }} – ${{ fromJson(steps.parse.outputs.result).rules[0].protocol }}/${{ fromJson(steps.parse.outputs.result).rules[0].port_s }}"
           labels: firewall-rule,pending-review
-          body: |
-            Auto-generated firewall rule for **${{ fromJson(steps.parse.outputs.result).request_id_reqid }}**
-
-            - **Source:** ${{ fromJson(steps.parse.outputs.result).source_ip_s_or_cidr_s }}
-            - **Destination:** ${{ fromJson(steps.parse.outputs.result).destination_ip_s_or_cidr_s }}
-            - **Port(s):** ${{ fromJson(steps.parse.outputs.result).port_s }}
-            - **Protocol:** ${{ fromJson(steps.parse.outputs.result).protocol }}
-            - **Direction:** ${{ fromJson(steps.parse.outputs.result).direction }}
-
-            Closes #${{ github.event.issue.number }}
+          body: ${{ steps.build_pr_body.outputs.result }}
