@@ -1,83 +1,141 @@
-name: Firewall Rule Request Automation
+name: 🔒 Process Firewall Requests
 
 on:
   issues:
-    types: [opened, edited, reopened]  # Trigger on new issues and when issues are edited:contentReference[oaicite:7]{index=7}
+    types: [opened, edited, reopened]   # retrigger when the user edits their issue
 
 permissions:
-  issues: write   # allow commenting on issues (and reading issue content)
+  contents: write       # for checkout & PR
+  issues:   write       # for commenting on issues
+  pull-requests: write  # for creating PRs
 
 jobs:
-  process-firewall-request:
+  process:
     runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
-      - name: Check out repository
+      # 1) Checkout
+      - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Validate issue content
+      # 2) Parse Issue into JSON
+      - name: 📝 Parse issue into JSON
+        id: parse
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          result-encoding: string
+          script: |
+            const issue = context.payload.issue;
+            if (!issue?.body) throw new Error("No issue body found");
+            const lines = issue.body.split("\n").map(l => l.trim());
+            const obj = {};
+            for (let i = 0; i < lines.length; i++) {
+              if (!lines[i].startsWith("🔹")) continue;
+              const after = lines[i].replace(/^🔹\s*/, "");
+              let [rawKey, inlineVal] = after.split(/:\s*/, 2);
+              rawKey = rawKey.replace(/:$/, "");
+              const key = rawKey
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "_")
+                .replace(/_+$/,"");
+              let val = inlineVal?.trim() || "";
+              if (!val) {
+                let j = i + 1;
+                while (j < lines.length && !lines[j]) j++;
+                if (j >= lines.length) throw new Error(`No value provided for "${rawKey}"`);
+                val = lines[j];
+              }
+              obj[key] = val;
+            }
+            return JSON.stringify(obj);
+
+      # 3) Write parsed JSON to disk (so validator always has an arg)
+      - name: 📄 Save parsed JSON
+        run: |
+          echo '${{ steps.parse.outputs.result }}' > parsed.json
+
+      # 4) Validate request fields (never abort job)
+      - name: ✅ Validate request fields
         id: validate
-        run: |
-          # Run the validation script on the issue body
-          # (Modify this path or command as needed for your repo)
-          set +e
-          OUTPUT=$(python scripts/validate_firewall_request.py)
-          EXIT_CODE=$?
-          set -e
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "$OUTPUT" > validation_error.txt   # save error message for comment
-          fi
-          # Print output (for logging)
-          echo "$OUTPUT"
-          exit $EXIT_CODE
         continue-on-error: true
-
-      - name: Comment on issue if validation fails
-        # Runs only if the validation step failed
-        if: ${{ failure() && steps.validate.outcome == 'failure' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
         run: |
-          echo "❌ **Validation Failed**. See details below:" > comment.md
-          echo '```' >> comment.md
-          cat validation_error.txt >> comment.md
-          echo '```' >> comment.md
-          # Post the comment using GitHub CLI
-          gh issue comment ${{ github.event.issue.number }} --body-file comment.md
-        # The above uses a temp file (comment.md) to preserve formatting of the message
+          set -o pipefail
+          # Run the validator with the single parsed.json argument
+          python3 scripts/validate_firewall_request.py "$(cat parsed.json)" 2>&1 | tee validation.log
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+        shell: bash
 
-      - name: Terraform Init
-        if: ${{ steps.validate.outcome == 'success' }}
-        run: terraform init
+      # 5) If validation failed, comment on the Issue
+      - name: 💬 Comment on validation failure
+        if: steps.validate.outputs.exit_code != '0'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const errs = require('fs').readFileSync('validation.log','utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct your issue and re-open when ready.`
+            });
 
-      - name: Terraform Validate
-        if: ${{ steps.validate.outcome == 'success' }}
-        run: terraform validate
+      # 6) Skip all the Terraform & PR steps if validation failed
+      - name: ⏭️ Skip remaining steps on validation error
+        if: steps.validate.outputs.exit_code != '0'
+        run: echo "Validation error detected; skipping Terraform & PR creation."
 
-      # (Optional) Generate/update Terraform config from issue if needed
-      # - name: Generate TF config from issue
-      #   if: ${{ steps.validate.outcome == 'success' }}
-      #   run: python scripts/generate_tf_from_issue.py
+      # 7) On success only: Setup Terraform
+      - name: ⚙️ Setup Terraform
+        if: steps.validate.outputs.exit_code == '0'
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.0'
 
-      - name: Create Pull Request for Firewall Rule
-        if: ${{ steps.validate.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 8) Inject the rule into tfvars
+      - name: ✍️ Inject rule into tfvars
+        if: steps.validate.outputs.exit_code == '0'
         run: |
-          # Example using GitHub CLI to create a PR
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git checkout -b "firewall-rule-${{ github.event.issue.number }}"
-          # (Assume changes (e.g., Terraform files) are already made at this point)
-          git add .
-          git commit -m "Add firewall rule for issue #${{ github.event.issue.number }}"
-          git push -u origin "firewall-rule-${{ github.event.issue.number }}"
-          gh pr create \
-            --title "Firewall rule request from #${{ github.event.issue.number }}" \
-            --body "This PR implements the firewall rule requested in issue #${{ github.event.issue.number }}." \
-            --label "firewall-rule"
+          python3 scripts/add_firewall_rule.py "$(cat parsed.json)" e1inetpolicy.auto.tfvars.json
 
-      - name: Mark workflow failed on validation error
-        if: ${{ steps.validate.outcome == 'failure' }}
-        run: exit 1
+      # 9) Terraform fmt & validate
+      - name: 🧹 Terraform fmt & validate
+        if: steps.validate.outputs.exit_code == '0'
+        env:
+          TF_IN_AUTOMATION: true
+        run: |
+          terraform init -backend=false
+          terraform fmt -recursive
+          terraform validate
+
+      # 10) Cleanup .terraform files
+      - name: 🗑️ Cleanup Terraform runtime files
+        if: steps.validate.outputs.exit_code == '0'
+        run: |
+          rm -rf .terraform .terraform.lock.hcl
+
+      # 11) Create a PR for NetSec review
+      - name: 🔀 Create PR for NetSec review
+        if: steps.validate.outputs.exit_code == '0'
+        uses: peter-evans/create-pull-request@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id_reqid }}
+          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).port_s }}"
+          labels: firewall-rule,pending-review
+          body: |
+            Auto-generated firewall rule for **${{ fromJson(steps.parse.outputs.result).request_id_reqid }}**
+
+            - **Source:** ${{ fromJson(steps.parse.outputs.result).source_ip_s_or_cidr_s }}
+            - **Destination:** ${{ fromJson(steps.parse.outputs.result).destination_ip_s_or_cidr_s }}
+            - **Port(s):** ${{ fromJson(steps.parse.outputs.result).port_s }}
+            - **Protocol:** ${{ fromJson(steps.parse.outputs.result).protocol }}
+            - **Direction:** ${{ fromJson(steps.parse.outputs.result).direction }}
+
+            Closes #${{ github.event.issue.number }}
