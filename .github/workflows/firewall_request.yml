@@ -90,19 +90,27 @@ jobs:
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
         shell: bash
 
-      # 5️⃣ If validation failed, comment back to the Issue
-      - name: 💬 Comment on validation failure
+      # 5️⃣ If validation failed, comment back and close the Issue
+      - name: 💬 Comment & close on validation failure
         if: steps.validate.outputs.exit_code != '0'
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const errs = require('fs').readFileSync('validation.log','utf8');
+            // Comment
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
               body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct and re-open this issue when ready.`
+            });
+            // Close the issue
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              state: "closed"
             });
 
       # 6️⃣ Skip the rest if validation failed
