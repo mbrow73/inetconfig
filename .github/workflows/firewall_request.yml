@@ -60,19 +60,19 @@ jobs:
 
       - name: ✅ Run validation
         id: validate
-        continue-on-error: true
         run: |
           set -o pipefail
           python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}' 2>&1 | tee validation.log
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: 💬 Comment on validation failure
-        if: steps.validate.outcome == 'failure'
+        if: steps.validate.outputs.exitcode != '0'
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const errors = require('fs').readFileSync('validation.log', 'utf8');
+            const errors = require('fs').readFileSync('validation.log','utf8');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo:  context.repo.repo,
@@ -81,7 +81,7 @@ jobs:
             });
 
       - name: 🛑 Halt on validation failure
-        if: steps.validate.outcome == 'failure'
+        if: steps.validate.outputs.exitcode != '0'
         run: exit 1
 
       - name: ✍️ Inject rule into tfvars
