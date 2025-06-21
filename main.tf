@@ -50,10 +50,10 @@ provider "google" {
 
 
 module "inet_firewall_policy" {
-  source = "./modules/firewall_policy"
-  project_id = var.project_id
-  inet_vpc = "default"
+  source                    = "./modules/firewall_policy"
+  project_id                = var.project_id
+  inet_vpc                  = "default"
   security_profile_group_id = ""
-  policy_name = "inet-policy"
-  inet_firewall_rules = var.inet_firewall_rules
+  policy_name               = "inet-policy"
+  inet_firewall_rules       = var.inet_firewall_rules
 }
