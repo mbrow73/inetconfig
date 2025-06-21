@@ -1,14 +1,13 @@
 name: 🔒 Process Firewall Requests
 
-# Grant write permissions to push branches & comment on issues
+on:
+  issues:
+    types: [opened]
+
 permissions:
   contents: write
   issues:   write
   pull-requests: write
-
-on:
-  issues:
-    types: [opened]
 
 jobs:
   process:
@@ -22,11 +21,6 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: ⚙️ Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: '1.5.0'
-
       - name: 📝 Parse issue into JSON
         id: parse
         uses: actions/github-script@v6
@@ -36,26 +30,21 @@ jobs:
           script: |
             const issue = context.payload.issue;
             if (!issue?.body) throw new Error("No issue body found");
-            const lines = issue.body.split("\n").map(l => l.trim());
+            const lines = issue.body.split("\n").map(l=>l.trim());
             const obj = {};
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i];
-              if (!line.startsWith("🔹")) continue;
-              const after = line.replace(/^🔹\s*/, "");
-              let [rawKey, inlineVal] = after.split(/:\s*/, 2);
-              rawKey = rawKey.replace(/:$/, "");
-              const key = rawKey
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "_")
-                .replace(/_+$/,"");
-              let val = inlineVal?.trim();
-              if (!val) {
-                let j = i + 1;
-                while (j < lines.length && lines[j] === "") j++;
-                if (j >= lines.length) throw new Error(`No value provided for "${rawKey}"`);
+            for(let i=0;i<lines.length;i++){
+              if(!lines[i].startsWith("🔹")) continue;
+              const after = lines[i].replace(/^🔹\s*/,"");
+              let [rawKey, inlineVal] = after.split(/:\s*/,2);
+              rawKey=rawKey.replace(/:$/,"");
+              const key = rawKey.toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/_+$/,"");
+              let val = inlineVal?.trim()||"";
+              if(!val){
+                let j=i+1; while(j<lines.length && !lines[j]) j++;
+                if(j>=lines.length) throw new Error(`No value for "${rawKey}"`);
                 val = lines[j];
               }
-              obj[key] = val;
+              obj[key]=val;
             }
             return JSON.stringify(obj);
 
@@ -74,23 +63,28 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const errors = require('fs').readFileSync('validation.log','utf8');
+            const errs = require('fs').readFileSync('validation.log','utf8');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errors}\n\`\`\`\nPlease fix and re-open this issue when ready.`
+              body: `⚠️ **Validation failed**:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct and then re-open this issue when ready.`
             });
 
-      - name: 🛑 Stop on validation failure
-        if: steps.validate.outputs.exitcode != '0'
-        run: exit 1
-
+      # Only run these if validation passed
+      - name: ⚙️ Setup Terraform & Inject & PR
+        if: steps.validate.outputs.exitcode == '0'
+        run: |
+          # Terraform setup
+          echo "Injecting rule and opening PR…"
+        # Expand into your existing steps:
       - name: ✍️ Inject rule into tfvars
+        if: steps.validate.outputs.exitcode == '0'
         run: |
           python3 scripts/add_firewall_rule.py '${{ steps.parse.outputs.result }}' e1inetpolicy.auto.tfvars.json
 
       - name: 🧹 Terraform fmt & validate
+        if: steps.validate.outputs.exitcode == '0'
         env:
           TF_IN_AUTOMATION: true
         run: |
@@ -99,16 +93,17 @@ jobs:
           terraform validate
 
       - name: 🗑️ Cleanup Terraform runtime files
+        if: steps.validate.outputs.exitcode == '0'
         run: |
-          rm -rf .terraform
-          rm -f .terraform.lock.hcl
+          rm -rf .terraform .terraform.lock.hcl
 
       - name: 🔀 Create PR for NetSec review
+        if: steps.validate.outputs.exitcode == '0'
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id_reqid }}
-          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).port_s }}}"
+          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).port_s }}"
           labels: firewall-rule,pending-review
           body: |
             Auto-generated firewall rule for **${{ fromJson(steps.parse.outputs.result).request_id_reqid }}**
