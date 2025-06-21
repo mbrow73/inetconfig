@@ -6,8 +6,11 @@ def die(msg):
     print(f"❌ Validation error: {msg}")
     sys.exit(1)
 
-# Load the parsed-issue JSON (from the `parse` step)
-data = json.loads(sys.argv[1])
+# Load the raw parsed-issue JSON
+raw = json.loads(sys.argv[1])
+
+# Normalize keys: strip leading/trailing underscores
+data = { k.strip('_'): v for k, v in raw.items() }
 
 # ── 1) Required fields ────────────────────────────────────────────────────────
 required = [
@@ -44,7 +47,6 @@ if data["direction"].upper() not in ("INGRESS", "EGRESS"):
     die("Direction must be INGRESS or EGRESS")
 
 # ── 5) Validate Request ID ────────────────────────────────────────────────────
-# The key is `request_id_reqid` (normalized from "Request ID (REQID)")
 if not re.match(r'^REQ\d+$', data["request_id_reqid"]):
     die("Request ID must follow REQ<digits>, e.g. REQ12345")
 
