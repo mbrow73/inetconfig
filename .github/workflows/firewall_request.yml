@@ -5,9 +5,9 @@ on:
     types: [opened, edited, reopened]
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: write       # for checkout & PR creation
+  issues:   write       # for commenting on issues
+  pull-requests: write  # for opening PRs
 
 jobs:
   process:
@@ -22,54 +22,53 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # 2️⃣ Parse the Issue Form response into rule objects
-      - name: 📝 Parse issue form into JSON
+      # 2️⃣ Parse the Issue into an array of rule objects
+      - name: 📝 Parse issue into JSON
         id: parse
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
-            const body = context.payload.issue.body;
-            
-            // Request ID is typically under "Request ID (REQID)"
-            const reqIdMatch = body.match(/Request ID.*?\n(.+)/i);
-            const request_id = reqIdMatch ? reqIdMatch[1].trim().replace(/`/g,'') : '';
-            if (!request_id) throw new Error("Empty Request ID");
+            const issue = context.payload.issue;
+            if (!issue?.body) throw new Error("No issue body found");
 
-            // Optional: Overall justification (not used per rule but can store)
-            const justificationMatch = body.match(/Overall Business Justification.*?\n(.+)/i);
-            const overall_justification = justificationMatch ? justificationMatch[1].trim() : '';
+            const lines = issue.body.split("\n");
+            // extract Request ID
+            const idLine = lines.find(
+              l => l.startsWith("🔹 Request ID") || l.startsWith("### Request ID")
+            );
+            if (!idLine) throw new Error("Missing Request ID");
+            const request_id_reqid = idLine.split(/:\s*/, 2)[1]?.trim();
+            if (!request_id_reqid) throw new Error("Empty Request ID");
 
-            // Parse each rule block from textarea "Rules"
-            const rulesSection = body.split(/### Rules/i)[1];
-            if (!rulesSection) throw new Error("No rules section found");
-            // split on blank lines between rules
-            const ruleBlocks = rulesSection.split(/\n\s*\n/).filter(r => r.match(/Source:/i));
+            const rules = [];
+            let current = null;
 
-            const rules = ruleBlocks.map((block, i) => {
-              const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-              const rule = {
-                request_id: `${request_id}-${i+1}`
-              };
-              for (const line of lines) {
-                if (line.match(/^Source:/i))
-                  rule.source_ip_s_or_cidr_s = line.replace(/Source:/i, '').replace(/`/g,'').trim();
-                if (line.match(/^Destination:/i))
-                  rule.destination_ip_s_or_cidr_s = line.replace(/Destination:/i, '').replace(/`/g,'').trim();
-                if (line.match(/^Ports:/i))
-                  rule.port_s = line.replace(/Ports:/i, '').replace(/`/g,'').trim();
-                if (line.match(/^Protocol:/i))
-                  rule.protocol = line.replace(/Protocol:/i, '').replace(/`/g,'').trim();
-                if (line.match(/^Direction:/i))
-                  rule.direction = line.replace(/Direction:/i, '').replace(/`/g,'').trim();
-                if (line.match(/^Justification:/i))
-                  rule.business_justification = line.replace(/Justification:/i, '').replace(/`/g,'').trim();
+            for (const raw of lines) {
+              const l = raw.trim();
+              // start a new rule block
+              if (/^####\s*Rule\s*\d+/.test(l)) {
+                if (current) rules.push(current);
+                current = { request_id_reqid };
+                continue;
               }
-              return rule;
-            });
+              if (!current) continue;
+              if (l.startsWith("🔹")) {
+                const parts = l.replace(/^🔹\s*/, "").split(/:\s*/, 2);
+                const rawKey = parts[0];
+                const rawVal = parts[1] ?? "";
+                const key = rawKey
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "_")
+                  .replace(/_+$/,"");
+                const val = rawVal.trim().replace(/^|$/g,"");
+                current[key] = val;
+              }
+            }
+            if (current) rules.push(current);
 
-            return JSON.stringify({ request_id, overall_justification, rules });
+            return JSON.stringify({ rules });
 
       # 3️⃣ Persist the parsed payload to disk
       - name: 💾 Save parsed JSON
@@ -102,7 +101,7 @@ jobs:
               owner: context.repo.owner,
               repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct and re-open this issue when ready.`
+              body: ⚠️ **Validation failed** for your firewall request:\n\\\\n${errs}\n\\\\nPlease correct and re-open this issue when ready.
             });
 
       # 6️⃣ Skip the rest if validation failed
@@ -119,11 +118,11 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
-            const parsed = JSON.parse(require('fs').readFileSync('parsed.json','utf8'));
+            const parsed = JSON.parse(\${{ steps.parse.outputs.result }});
             const lines = parsed.rules
-              .map((r,i) => `- Rule ${i+1}: ${r.source_ip_s_or_cidr_s} → ${r.destination_ip_s_or_cidr_s} on ${r.protocol}/${r.port_s}`)
+              .map((r,i) => - Rule ${i+1}: ${r.source_ip_s_or_cidr_s} → ${r.destination_ip_s_or_cidr_s} on ${r.protocol}/${r.port_s})
               .join("\n");
-            return `Auto-generated firewall rules for **${parsed.request_id}**:\n\n${lines}\n\nCloses #${{ github.event.issue.number }}`;
+            return Auto-generated firewall rules for **${parsed.rules[0].request_id_reqid}**:\n\n${lines}\n\nCloses #${{ github.event.issue.number }};
 
       # 8️⃣ Setup Terraform (only on success)
       - name: ⚙️ Setup Terraform
@@ -159,7 +158,7 @@ jobs:
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id }}
-          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id }}"
+          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).rules[0].request_id_reqid }}
+          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).rules[0].request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).rules[0].protocol }}/${{ fromJson(steps.parse.outputs.result).rules[0].port_s }}"
           labels: firewall-rule,pending-review
           body: ${{ steps.build_pr_body.outputs.result }}
