@@ -16,61 +16,25 @@ body:
       label: Overall Business Justification
       description: High-level justification for this firewall change
 
-  - type: markdown
-    attributes:
-      value: |
-        ## Rules
-        For each rule, click “Add item” and complete the required fields.
-        You may enter as many rules as needed for the same Request ID.
-        Each rule will be processed as a distinct firewall rule.
-
-  - type: input
-    id: source_ip_or_cidr
-    attributes:
-      label: Source IP(s) or CIDR(s)
-      description: Comma-separated, e.g. 203.0.113.25/32 or 10.1.2.0/24
-      placeholder: 203.0.113.25/32
-      multiple: true
-
-  - type: input
-    id: destination_ip_or_cidr
-    attributes:
-      label: Destination IP(s) or CIDR(s)
-      description: Comma-separated, e.g. 10.1.2.0/24
-      placeholder: 10.1.2.0/24
-      multiple: true
-
-  - type: input
-    id: ports
-    attributes:
-      label: Port(s)
-      description: Comma-separated or range (e.g. 80,443 or 1000-1100)
-      placeholder: 443
-      multiple: true
-
-  - type: dropdown
-    id: protocol
-    attributes:
-      label: Protocol
-      options:
-        - TCP
-        - UDP
-        - ICMP
-      multiple: true
-
-  - type: dropdown
-    id: direction
-    attributes:
-      label: Direction
-      options:
-        - INGRESS
-        - EGRESS
-      multiple: true
-
   - type: textarea
-    id: rule_justification
+    id: rules
     attributes:
-      label: Business Justification (per rule)
-      description: Why is this rule required?
-      placeholder: Required for XYZ service...
-      multiple: true
+      label: Rules
+      description: |
+        Enter one or more rules in the following format (copy for each rule):
+
+        ```
+        Source: 203.0.113.25/32
+        Destination: 10.1.2.0/24
+        Ports: 443,8443
+        Protocol: TCP
+        Direction: INGRESS
+        Justification: Needed for XYZ service
+        ```
+      placeholder: |
+        Source: 203.0.113.25/32
+        Destination: 10.1.2.0/24
+        Ports: 443,8443
+        Protocol: TCP
+        Direction: INGRESS
+        Justification: Needed for XYZ service
