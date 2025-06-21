@@ -5,9 +5,9 @@ on:
     types: [opened]
 
 permissions:
-  contents: write
-  issues:   write
-  pull-requests: write
+  contents: write        # to checkout & push branches
+  issues:   write        # to comment on issues
+  pull-requests: write   # to create PRs
 
 jobs:
   process:
@@ -26,7 +26,7 @@ jobs:
         with:
           terraform_version: '1.5.0'
 
-      - name: 📝 Parse issue into JSON
+      - name: 📝 Parse Issue into JSON
         id: parse
         uses: actions/github-script@v6
         with:
@@ -58,32 +58,63 @@ jobs:
             }
             return JSON.stringify(obj);
 
-      - name: ✅ Validate request fields
+      - name: ✅ Run validation
         id: validate
         continue-on-error: true
         run: |
+          set -o pipefail
           python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}' 2>&1 | tee validation.log
-          echo "::set-output name=exitcode::${PIPESTATUS[0]}"
+        shell: bash
 
       - name: 💬 Comment on validation failure
-        if: steps.validate.outputs.exitcode != '0'
+        if: steps.validate.outcome == 'failure'
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue_number = context.payload.issue.number;
-            const errors = require('fs').readFileSync('validation.log','utf8');
-            await github.issues.createComment({
+            const errors = require('fs').readFileSync('validation.log', 'utf8');
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo:  context.repo.repo,
-              issue_number,
-              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errors}\n\`\`\`\nPlease correct your input and re-open or comment when ready.`
+              issue_number: context.payload.issue.number,
+              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errors}\n\`\`\`\nPlease correct and then re-open the issue.`
             });
 
-      # stop here if validation failed
       - name: 🛑 Halt on validation failure
-        if: steps.validate.outputs.exitcode != '0'
+        if: steps.validate.outcome == 'failure'
         run: exit 1
 
-      # … the rest of your success path (inject rule, terraform validate, PR) …
+      - name: ✍️ Inject rule into tfvars
+        run: |
+          python3 scripts/add_firewall_rule.py '${{ steps.parse.outputs.result }}' e1inetpolicy.auto.tfvars.json
 
+      - name: 🧹 Terraform fmt & validate
+        env:
+          TF_IN_AUTOMATION: true
+        run: |
+          terraform init -backend=false
+          terraform fmt -recursive
+          terraform validate
+
+      - name: 🗑️ Cleanup Terraform runtime files
+        run: |
+          rm -rf .terraform
+          rm -f .terraform.lock.hcl
+
+      - name: 🔀 Create PR for NetSec review
+        uses: peter-evans/create-pull-request@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id_reqid }}
+          title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).protocol }}/${{ fromJson(steps.parse.outputs.result).port_s }}"
+          labels: firewall-rule,pending-review
+          body: |
+            Auto-generated firewall rule for **${{ fromJson(steps.parse.outputs.result).request_id_reqid }}**
+
+            - **Source:** ${{ fromJson(steps.parse.outputs.result).source_ip_s_or_cidr_s }}
+            - **Destination:** ${{ fromJson(steps.parse.outputs.result).destination_ip_s_or_cidr_s }}
+            - **Port(s):** ${{ fromJson(steps.parse.outputs.result).port_s }}
+            - **Protocol:** ${{ fromJson(steps.parse.outputs.result).protocol }}
+            - **Direction:** ${{ fromJson(steps.parse.outputs.result).direction }}
+
+            Closes #${{ github.event.issue.number }}
