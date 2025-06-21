@@ -1,0 +1,72 @@
+# .github/ISSUE_TEMPLATE/firewall-rule.yml
+name: Firewall Rule Request
+description: Request one or more GCP firewall rules
+labels:
+  - firewall-request
+body:
+  - type: input
+    id: request_id
+    attributes:
+      label: Request ID (REQID)
+      description: Unique per request, e.g. REQ12345
+      placeholder: REQ12345
+      required: true
+
+  - type: title
+    text: Rules
+
+  - type: markdown
+    text: |
+      For each rule, click “Add another item” and fill in these fields.
+
+  - type: list
+    id: rules
+    attributes:
+      label: Firewall rules
+      description: A list of one or more rules
+      min-items: 1
+    items:
+      - type: dropdown
+        id: protocol
+        attributes:
+          label: Protocol
+          options:
+            - TCP
+            - UDP
+            - ICMP
+
+      - type: dropdown
+        id: direction
+        attributes:
+          label: Direction
+          options:
+            - INGRESS
+            - EGRESS
+
+      - type: input
+        id: source_ip_or_cidr
+        attributes:
+          label: Source IP(s) or CIDR(s)
+          description: Comma-separated, e.g. 203.0.113.25/32
+          required: true
+
+      - type: input
+        id: destination_ip_or_cidr
+        attributes:
+          label: Destination IP(s) or CIDR(s)
+          description: Comma-separated, e.g. 10.1.2.0/24
+          required: true
+
+      - type: input
+        id: ports
+        attributes:
+          label: Port(s)
+          description: Comma-separated or range, e.g. 443 or 1000-1100
+          required: true
+
+      - type: textarea
+        id: business_justification
+        attributes:
+          label: Business Justification
+          description: Short explanation for the rule
+          required: true

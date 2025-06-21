@@ -62,7 +62,7 @@ jobs:
                   .toLowerCase()
                   .replace(/[^a-z0-9]+/g, "_")
                   .replace(/_+$/,"");
-                const val = rawVal.trim().replace(/^`|`$/g,"");
+                const val = rawVal.trim().replace(/^|$/g,"");
                 current[key] = val;
               }
             }
@@ -101,7 +101,7 @@ jobs:
               owner: context.repo.owner,
               repo:  context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `⚠️ **Validation failed** for your firewall request:\n\`\`\`\n${errs}\n\`\`\`\nPlease correct and re-open this issue when ready.`
+              body: ⚠️ **Validation failed** for your firewall request:\n\\\\n${errs}\n\\\\nPlease correct and re-open this issue when ready.
             });
 
       # 6️⃣ Skip the rest if validation failed
@@ -118,11 +118,11 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
-            const parsed = JSON.parse(`\${{ steps.parse.outputs.result }}`);
+            const parsed = JSON.parse(\${{ steps.parse.outputs.result }});
             const lines = parsed.rules
-              .map((r,i) => `- Rule ${i+1}: ${r.source_ip_s_or_cidr_s} → ${r.destination_ip_s_or_cidr_s} on ${r.protocol}/${r.port_s}`)
+              .map((r,i) => - Rule ${i+1}: ${r.source_ip_s_or_cidr_s} → ${r.destination_ip_s_or_cidr_s} on ${r.protocol}/${r.port_s})
               .join("\n");
-            return `Auto-generated firewall rules for **${parsed.rules[0].request_id_reqid}**:\n\n${lines}\n\nCloses #${{ github.event.issue.number }}`;
+            return Auto-generated firewall rules for **${parsed.rules[0].request_id_reqid}**:\n\n${lines}\n\nCloses #${{ github.event.issue.number }};
 
       # 8️⃣ Setup Terraform (only on success)
       - name: ⚙️ Setup Terraform
