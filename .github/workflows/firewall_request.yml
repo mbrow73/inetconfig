@@ -1,5 +1,11 @@
 name: 🔒 Process Firewall Requests
 
+# Grant write permissions to push branches & comment on issues
+permissions:
+  contents: write
+  issues:   write
+  pull-requests: write
+
 on:
   issues:
     types: [opened]
@@ -7,17 +13,24 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest
+    # Only run on issues labeled "firewall-request"
     if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
+      # 1. Checkout using GITHUB_TOKEN (with full history)
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
+      # 2. Install Terraform CLI
       - name: ⚙️ Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: '1.5.0'
 
+      # 3. Parse the issue body into JSON fields
       - name: 📝 Parse issue into JSON
         id: parse
         uses: actions/github-script@v6
@@ -34,14 +47,20 @@ jobs:
             for (let i = 0; i < lines.length; i++) {
               const line = lines[i];
               if (!line.startsWith("🔹")) continue;
+
+              // Strip bullet
               const after = line.replace(/^🔹\s*/, "");
+              // Attempt inline split ("Key: value")
               let [rawKey, inlineVal] = after.split(/:\s*/, 2);
-              rawKey = rawKey.replace(/:$/, "");
+              rawKey = rawKey.replace(/:$/, "");  // drop trailing colon
+
+              // Normalize key → source_ip_s_or_cidr_s, etc.
               const key = rawKey
                 .toLowerCase()
                 .replace(/[^a-z0-9]+/g, "_")
                 .replace(/_+$/,"");
 
+              // Determine value: prefer inlineVal, else next non-blank line
               let val = inlineVal?.trim();
               if (!val) {
                 let j = i + 1;
@@ -54,23 +73,32 @@ jobs:
 
             return JSON.stringify(obj);
 
+      # 4. Validate extracted fields
       - name: ✅ Validate request fields
         run: |
           python3 scripts/validate_firewall_request.py '${{ steps.parse.outputs.result }}'
 
+      # 5. Inject new rule into your tfvars
       - name: ✍️ Inject rule into tfvars
         run: |
           python3 scripts/add_firewall_rule.py '${{ steps.parse.outputs.result }}' e1inetpolicy.auto.tfvars.json
 
+      # 6. Terraform init, fmt, validate
       - name: 🧹 Terraform fmt & validate
         env:
           TF_IN_AUTOMATION: true
         run: |
           terraform init -backend=false
-          # Auto-format all files in-place so fmt-check won’t fail
           terraform fmt -recursive
           terraform validate
 
+      # 7. *** Cleanup Terraform runtime files so we don’t commit them ***
+      - name: 🗑️ Cleanup Terraform runtime files
+        run: |
+          rm -rf .terraform
+          rm -f .terraform.lock.hcl
+
+      # 8. Create the Pull Request for netsec review
       - name: 🔀 Create PR for NetSec review
         uses: peter-evans/create-pull-request@v3
         with:
