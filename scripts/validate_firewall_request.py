@@ -163,10 +163,6 @@ new_ports = port_range_expand(get_ports(data))
 new_proto = data["protocol"]
 new_dir = data["direction"].upper()
 
-# Debug: Show the new and existing rule fields being compared
-print(f"DEBUG: Existing rules loaded: {json.dumps(existing, indent=2)}")
-print(f"DEBUG: New rule fields: srcs={new_srcs} dsts={new_dsts} ports={get_ports(data)} proto={new_proto} dir={new_dir}")
-
 for exist in existing:
     exist_proto = (exist.get("protocol") or "").lower()
     exist_dir = (exist.get("direction") or "").upper()
@@ -185,6 +181,14 @@ for exist in existing:
                     for ed in exist_dsts:
                         if cidr_overlap(nd, ed):
                             if ports_overlap(new_ports, exist_ports_set):
-                                die(f"Rule shadow/overlap detected: Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}. Please combine or update your rules.")
+                                existing_carid = exist.get("carid", "UNKNOWN")
+                                existing_reqid = exist.get("name", "NO-REQID")
+                                die(
+                                    f"Rule shadow/overlap detected:\n"
+                                    f"- Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}.\n"
+                                    f"- Existing rule REQID: {existing_reqid}, Team (CARID): {existing_carid}\n"
+                                    f"If you believe your rule should replace or update this, please coordinate with the rule owner (CARID) or open a Rule Update/Removal Issue.\n"
+                                )
 
 print("✅ Validation passed")
+
