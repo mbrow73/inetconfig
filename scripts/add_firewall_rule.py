@@ -2,6 +2,22 @@
 import sys, json
 from json.decoder import JSONDecodeError
 
+"""
+Usage: add_firewall_rule.py '<parsed-json-string>' <tfvars-file>
+Appends one or more firewall rules (from parsed.json) into the Terraform auto-tfvars JSON.
+Expects a top-level "carid" (or "car_id") field in the parsed JSON.
+Each rule object must include:
+  - request_id_reqid (string)
+  - source_ip_s_or_cidr_s
+  - destination_ip_s_or_cidr_s
+  - port_s
+  - protocol
+  - direction
+  - business_justification
+
+Outputs appended rules under `auto_firewall_rules` in the tfvars file.
+"""
+
 def main():
     if len(sys.argv) < 3:
         print("❌ Usage: add_firewall_rule.py '<parsed-json-string>' <tfvars-file>")
@@ -22,6 +38,14 @@ def main():
         print("❌ No 'rules' list found or it's empty in input")
         sys.exit(1)
 
+    # Support both "carid" and "car_id" as possible keys
+    car_id = (
+        parsed.get("carid")
+        or parsed.get("car_id")
+        or "UNKNOWNCAR"
+    )
+    car_id = str(car_id).upper().replace(" ", "")
+
     # 2) Load or initialize tfvars data
     try:
         with open(tfpath) as f:
@@ -31,22 +55,21 @@ def main():
     except (JSONDecodeError, FileNotFoundError):
         data = {}
 
+    # 3) Ensure the auto_firewall_rules list exists
     key = "auto_firewall_rules"
     existing = data.get(key)
     if not isinstance(existing, list):
         existing = []
 
+    # 4) Append each rule with incremented priority and unique name
     for idx, rule in enumerate(rules_in, start=1):
         max_prio = max((r.get("priority", 0) for r in existing), default=1000)
         new_prio = max_prio + 1
         rid      = rule.get("request_id_reqid")
-        team     = rule.get("team_id", "UNKNOWNTEAM").upper()   # Fallback if missing
-        proto    = rule.get("protocol", "").upper()
-        ports    = [p.strip() for p in rule.get("port_s", "").split(",") if p.strip()]
-        ports_str = "-".join(ports) if ports else "ANY"
-
-        # Construct the rule name with Team ID
-        name     = f"AUTO-{team}-{rid}-{idx}-{proto}-{ports_str}"
+        protocol = rule.get("protocol", "").upper()
+        ports    = rule.get("port_s", "").replace(",", "-").replace(" ", "")
+        # Naming: AUTO-CARID-REQID-INDEX-PROTO-PORTS
+        name = f"AUTO-{car_id}-{rid}-{idx}-{protocol}-{ports}"
 
         new_rule = {
             "name":             name,
@@ -54,8 +77,8 @@ def main():
             "direction":        rule.get("direction", "").upper(),
             "src_ip_ranges":    [ip.strip() for ip in rule.get("source_ip_s_or_cidr_s", "").split(",") if ip.strip()],
             "dest_ip_ranges":   [ip.strip() for ip in rule.get("destination_ip_s_or_cidr_s", "").split(",") if ip.strip()],
-            "protocol":         proto,
-            "ports":            ports,
+            "protocol":         protocol,
+            "ports":            [p.strip() for p in rule.get("port_s", "").split(",") if p.strip()],
             "enable_logging":   True,
             "action":           "allow",
             "tls_inspection":   False,
@@ -65,6 +88,7 @@ def main():
         existing.append(new_rule)
         print(f"✅ Appended rule {name} with priority {new_prio}")
 
+    # 5) Persist back to tfvars
     data[key] = existing
     with open(tfpath, "w") as f:
         json.dump(data, f, indent=2)

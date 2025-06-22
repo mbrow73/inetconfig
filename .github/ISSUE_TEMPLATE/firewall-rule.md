@@ -6,7 +6,7 @@ labels: ["firewall-request"]
 
 ### Request ID (REQID): REQXXXXXX
 
-### CARID: xxxxxxxxx
+### CARID: 
 
 ### Rules
 
