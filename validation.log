@@ -1,4 +1,86 @@
-Validating rule: {"request_id_reqid":"REQ12345","source_ip_s_or_cidr_s":"203.0.113.25/32","destination_ip_s_or_cidr_s":"10.1.2.0/24","port_s":"443","protocol":"TCP","direction":"INGRESS","business_justification":"A short explanation…"}
+Validating rule: {"request_id_reqid":"REQ1231232","source_ip_s_or_cidr_s":"203.0.113.23/32","destination_ip_s_or_cidr_s":"10.1.2.0/24","port_s":"443","protocol":"tcp","direction":"INGRESS","business_justification":"A short explanation…"}
+DEBUG: Existing rules loaded: [
+  {
+    "name": "REQ12345-1",
+    "description": "A short explanation\u2026",
+    "direction": "INGRESS",
+    "src_ip_ranges": [
+      "203.0.113.25/32"
+    ],
+    "dest_ip_ranges": [
+      "10.1.2.0/24"
+    ],
+    "protocol": "tcp",
+    "ports": [
+      "443"
+    ],
+    "enable_logging": true,
+    "action": "allow",
+    "tls_inspection": false,
+    "priority": 1001
+  },
+  {
+    "name": "REQ12345-2",
+    "description": "Another justification\u2026",
+    "direction": "EGRESS",
+    "src_ip_ranges": [
+      "10.2.3.4/32"
+    ],
+    "dest_ip_ranges": [
+      "10.1.2.0/24"
+    ],
+    "protocol": "tcp",
+    "ports": [
+      "8443"
+    ],
+    "enable_logging": true,
+    "action": "allow",
+    "tls_inspection": false,
+    "priority": 1002
+  }
+]
+DEBUG: New rule fields: srcs=['203.0.113.23/32'] dsts=['10.1.2.0/24'] ports=['443'] proto=tcp dir=INGRESS
 ✅ Validation passed
-Validating rule: {"request_id_reqid":"REQ12345","source_ip_s_or_cidr_s":"10.2.3.4/32","destination_ip_s_or_cidr_s":"10.1.2.0/24","port_s":"8443","protocol":"TCP","direction":"EGRESS","business_justification":"Another justification…"}
+Validating rule: {"request_id_reqid":"REQ1231232","source_ip_s_or_cidr_s":"10.2.3.3/32","destination_ip_s_or_cidr_s":"10.1.2.0/24","port_s":"8443","protocol":"tcp","direction":"EGRESS","business_justification":"Another justification…"}
+DEBUG: Existing rules loaded: [
+  {
+    "name": "REQ12345-1",
+    "description": "A short explanation\u2026",
+    "direction": "INGRESS",
+    "src_ip_ranges": [
+      "203.0.113.25/32"
+    ],
+    "dest_ip_ranges": [
+      "10.1.2.0/24"
+    ],
+    "protocol": "tcp",
+    "ports": [
+      "443"
+    ],
+    "enable_logging": true,
+    "action": "allow",
+    "tls_inspection": false,
+    "priority": 1001
+  },
+  {
+    "name": "REQ12345-2",
+    "description": "Another justification\u2026",
+    "direction": "EGRESS",
+    "src_ip_ranges": [
+      "10.2.3.4/32"
+    ],
+    "dest_ip_ranges": [
+      "10.1.2.0/24"
+    ],
+    "protocol": "tcp",
+    "ports": [
+      "8443"
+    ],
+    "enable_logging": true,
+    "action": "allow",
+    "tls_inspection": false,
+    "priority": 1002
+  }
+]
+DEBUG: New rule fields: srcs=['10.2.3.3/32'] dsts=['10.1.2.0/24'] ports=['8443'] proto=tcp dir=EGRESS
 ✅ Validation passed
