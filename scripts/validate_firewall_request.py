@@ -74,10 +74,18 @@ def normalize_rule(r):
     # Always compare protocol in upper, but require lowercase on input for hygiene
     proto = r.get("protocol", "")
     proto_cmp = proto.upper() if proto else ""
+    # Convert everything to lists-of-strings
+    def to_list(val):
+        if isinstance(val, list):
+            return sorted([str(v).strip() for v in val])
+        elif isinstance(val, str):
+            return sorted([v.strip() for v in val.split(",")])
+        else:
+            return []
     return {
-        "src_ip_ranges": sorted([ip.strip() for ip in r.get("src_ip_ranges", r.get("source_ip_s_or_cidr_s", "")).split(",")]) if isinstance(r.get("src_ip_ranges", r.get("source_ip_s_or_cidr_s", "")), str) else sorted(r.get("src_ip_ranges", [])),
-        "dest_ip_ranges": sorted([ip.strip() for ip in r.get("dest_ip_ranges", r.get("destination_ip_s_or_cidr_s", "")).split(",")]) if isinstance(r.get("dest_ip_ranges", r.get("destination_ip_s_or_cidr_s", "")), str) else sorted(r.get("dest_ip_ranges", [])),
-        "ports": sorted([str(p).strip() for p in r.get("ports", r.get("port_s", "")).split(",")]) if isinstance(r.get("ports", r.get("port_s", "")), str) else sorted([str(p).strip() for p in r.get("ports", [])]),
+        "src_ip_ranges": to_list(r.get("src_ip_ranges", r.get("source_ip_s_or_cidr_s", ""))),
+        "dest_ip_ranges": to_list(r.get("dest_ip_ranges", r.get("destination_ip_s_or_cidr_s", ""))),
+        "ports": to_list(r.get("ports", r.get("port_s", ""))),
         "protocol": proto_cmp,
         "direction": r.get("direction", "").upper()
     }
@@ -92,8 +100,11 @@ for exist in existing:
 
 def cidr_overlap(cidr1, cidr2):
     """True if cidr1 and cidr2 overlap at all."""
-    net1, net2 = ip_network(cidr1, strict=False), ip_network(cidr2, strict=False)
-    return net1.overlaps(net2)
+    try:
+        net1, net2 = ip_network(cidr1, strict=False), ip_network(cidr2, strict=False)
+        return net1.overlaps(net2)
+    except Exception:
+        return False
 
 def port_range_expand(portstr):
     """Turn '80' or '80-90' or list ['80', '443-445'] into a set of ports."""
@@ -103,9 +114,14 @@ def port_range_expand(portstr):
     else:
         parts = [p.strip() for p in str(portstr).split(',')]
     for p in parts:
+        if not p:
+            continue
         if '-' in p:
-            start, end = map(int, p.split('-'))
-            ports.update(range(start, end+1))
+            try:
+                start, end = map(int, p.split('-'))
+                ports.update(range(start, end+1))
+            except Exception:
+                continue
         else:
             try:
                 ports.add(int(p))
@@ -117,9 +133,33 @@ def ports_overlap(new_ports, exist_ports):
     """True if any port in new overlaps with existing set."""
     return not new_ports.isdisjoint(exist_ports)
 
-new_srcs = [ip.strip() for ip in data["source_ip_s_or_cidr_s"].split(",")]
-new_dsts = [ip.strip() for ip in data["destination_ip_s_or_cidr_s"].split(",")]
-new_ports = port_range_expand(data["port_s"])
+def get_srcs(rule):
+    val = rule.get("src_ip_ranges") or rule.get("source_ip_s_or_cidr_s", [])
+    if isinstance(val, str):
+        return [s.strip() for s in val.split(",") if s.strip()]
+    elif isinstance(val, list):
+        return [str(s).strip() for s in val if str(s).strip()]
+    return []
+
+def get_dsts(rule):
+    val = rule.get("dest_ip_ranges") or rule.get("destination_ip_s_or_cidr_s", [])
+    if isinstance(val, str):
+        return [d.strip() for d in val.split(",") if d.strip()]
+    elif isinstance(val, list):
+        return [str(d).strip() for d in val if str(d).strip()]
+    return []
+
+def get_ports(rule):
+    val = rule.get("ports") or rule.get("port_s", [])
+    if isinstance(val, list):
+        return [str(p).strip() for p in val if str(p).strip()]
+    elif isinstance(val, str):
+        return [p.strip() for p in val.split(",") if p.strip()]
+    return []
+
+new_srcs = get_srcs(data)
+new_dsts = get_dsts(data)
+new_ports = port_range_expand(get_ports(data))
 new_proto = data["protocol"]
 new_dir = data["direction"].upper()
 
@@ -130,12 +170,9 @@ for exist in existing:
     if exist_proto != new_proto or exist_dir != new_dir:
         continue  # Only compare apples to apples
 
-    exist_srcs = exist.get("src_ip_ranges") or exist.get("source_ip_s_or_cidr_s", [])
-    exist_dsts = exist.get("dest_ip_ranges") or exist.get("destination_ip_s_or_cidr_s", [])
-    if isinstance(exist_srcs, str):
-        exist_srcs = [exist_srcs]
-    if isinstance(exist_dsts, str):
-        exist_dsts = [exist_dsts]
+    exist_srcs = get_srcs(exist)
+    exist_dsts = get_dsts(exist)
+    exist_ports_set = port_range_expand(get_ports(exist))
 
     for ns in new_srcs:
         for es in exist_srcs:
@@ -143,7 +180,6 @@ for exist in existing:
                 for nd in new_dsts:
                     for ed in exist_dsts:
                         if cidr_overlap(nd, ed):
-                            exist_ports_set = port_range_expand(exist.get("ports") or exist.get("port_s", []))
                             if ports_overlap(new_ports, exist_ports_set):
                                 die(f"Rule shadow/overlap detected: Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}. Please combine or update your rules.")
 
