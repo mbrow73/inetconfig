@@ -7,14 +7,14 @@ resource "google_compute_network_firewall_policy" "this" {
 
 
 resource "google_compute_network_firewall_policy_rule" "rule" {
-  for_each        = { for r in var.inet_firewall_rules : r.name => r }
-  firewall_policy = google_compute_network_firewall_policy.this.id
-  description     = each.value.description
-  priority        = each.value.priority
-  direction       = each.value.direction
-  action          = each.value.action
-  enable_logging  = each.value.enable_logging
-  tls_inspect     = each.value.tls_inspect
+  for_each               = { for r in var.inet_firewall_rules : r.name => r }
+  firewall_policy        = google_compute_network_firewall_policy.this.id
+  description            = each.value.description
+  priority               = each.value.priority
+  direction              = each.value.direction
+  action                 = each.value.action
+  enable_logging         = each.value.enable_logging
+  tls_inspect            = each.value.tls_inspect
   security_profile_group = each.value.security_profile_group
 
 
