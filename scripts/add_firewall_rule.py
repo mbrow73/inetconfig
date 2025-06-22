@@ -57,7 +57,12 @@ def main():
         max_prio = max((r.get("priority", 0) for r in existing), default=1000)
         new_prio = max_prio + 1
         rid      = rule.get("request_id_reqid")
-        name     = f"{rid}-{idx}"
+        proto    = rule.get("protocol", "").upper()
+        ports    = [p.strip() for p in rule.get("port_s", "").split(",") if p.strip()]
+        ports_str = "-".join(ports) if ports else "ANY"
+
+        # Construct the rule name
+        name     = f"AUTO-{rid}-{idx}-{proto}-{ports_str}"
 
         new_rule = {
             "name":             name,
@@ -65,8 +70,8 @@ def main():
             "direction":        rule.get("direction", "").upper(),
             "src_ip_ranges":    [ip.strip() for ip in rule.get("source_ip_s_or_cidr_s", "").split(",") if ip.strip()],
             "dest_ip_ranges":   [ip.strip() for ip in rule.get("destination_ip_s_or_cidr_s", "").split(",") if ip.strip()],
-            "protocol":         rule.get("protocol", "").upper(),
-            "ports":            [p.strip() for p in rule.get("port_s", "").split(",") if p.strip()],
+            "protocol":         proto,
+            "ports":            ports,
             "enable_logging":   True,
             "action":           "allow",
             "tls_inspection":   False,
