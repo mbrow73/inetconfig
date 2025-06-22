@@ -186,8 +186,7 @@ for exist in existing:
                                 die(
                                     f"Rule shadow/overlap detected:\n"
                                     f"- Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}.\n"
-                                    f"- Existing rule REQID: {existing_reqid}, Team (CARID): {existing_carid}\n"
-                                    f"If you believe your rule should replace or update this, please coordinate with the rule owner (CARID) or open a Rule Update/Removal Issue.\n"
+                                    f"If you believe your rule should replace or update this, please coordinate with the rule owner and/or open a Rule Update/Removal Issue. The CARID of app that owns conflicting firewall rule is after 'AUTO' in rule name of validation error"
                                 )
 
 print("✅ Validation passed")
