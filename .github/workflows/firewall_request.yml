@@ -5,9 +5,9 @@ on:
     types: [opened, edited, reopened]
 
 permissions:
-  contents: write       # for checkout & PR creation
-  issues:   write       # for commenting on issues and closing them
-  pull-requests: write  # for opening PRs
+  contents: write
+  issues:   write
+  pull-requests: write
 
 jobs:
   process:
@@ -22,8 +22,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # 2️⃣ Parse the Issue into an array of rule objects
-      - name: 📝 Parse issue into JSON
+      # 2️⃣ Parse the Issue into an array of rule objects and extract CARID
+      - name: 📝 Parse issue into JSON (and CARID)
         id: parse
         uses: actions/github-script@v6
         with:
@@ -34,7 +34,18 @@ jobs:
             if (!issue?.body) throw new Error("No issue body found");
 
             const lines = issue.body.split("\n");
-            // extract Request ID
+
+            // Extract CARID
+            let carid = "";
+            for (const l of lines) {
+              const m = l.match(/^\s*###\s*CARID\s*:\s*(.*)$/i);
+              if (m) {
+                carid = m[1].replace(/[` ]/g, "");
+                break;
+              }
+            }
+
+            // Extract Request ID (as before)
             const idLine = lines.find(
               l => l.startsWith("🔹 Request ID") || l.startsWith("### Request ID")
             );
@@ -68,7 +79,7 @@ jobs:
             }
             if (current) rules.push(current);
 
-            return JSON.stringify({ rules });
+            return JSON.stringify({ carid, rules });
 
       # 3️⃣ Persist the parsed payload to disk
       - name: 💾 Save parsed JSON
@@ -179,4 +190,3 @@ jobs:
           title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).rules[0].request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).rules[0].protocol }}/${{ fromJson(steps.parse.outputs.result).rules[0].port_s }}"
           labels: firewall-rule,pending-review
           body: ${{ steps.build_pr_body.outputs.result }}
-
