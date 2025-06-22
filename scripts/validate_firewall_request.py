@@ -185,8 +185,6 @@ for exist in existing:
                     for ed in exist_dsts:
                         if cidr_overlap(nd, ed):
                             if ports_overlap(new_ports, exist_ports_set):
-                                print(f"DEBUG: Testing overlap: NEW srcs={ns} dsts={nd} ports={sorted(new_ports)} proto={new_proto} dir={new_dir}")
-                                print(f"DEBUG: Against EXISTING srcs={es} dsts={ed} ports={sorted(exist_ports_set)} proto={exist_proto} dir={exist_dir}")
                                 die(f"Rule shadow/overlap detected: Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}. Please combine or update your rules.")
 
 print("✅ Validation passed")
