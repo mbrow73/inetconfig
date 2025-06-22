@@ -1,9 +1,9 @@
 
-# 🚦 Validation Script: What It Checks
+#  Validation Script: What It Checks
 
 ---
 
-## ✅ Required Fields Present
+##  Required Fields Present
 Ensures the following fields are present and non-empty:
 - `source_ip_s_or_cidr_s`
 - `destination_ip_s_or_cidr_s`
