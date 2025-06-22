@@ -15,6 +15,7 @@ resource "google_compute_network_firewall_policy_rule" "rule" {
   action          = each.value.action
   enable_logging  = each.value.enable_logging
   tls_inspect     = each.value.tls_inspect
+  security_profile_group = each.value.security_profile_group
 
 
   # Match block for L4:
