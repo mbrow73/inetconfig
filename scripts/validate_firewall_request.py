@@ -181,13 +181,12 @@ for exist in existing:
                     for ed in exist_dsts:
                         if cidr_overlap(nd, ed):
                             if ports_overlap(new_ports, exist_ports_set):
-                                existing_carid = exist.get("carid", "UNKNOWN")
-                                existing_reqid = exist.get("name", "NO-REQID")
+                                rule_name = exist.get("name", "NO-RULE-NAME")
                                 die(
                                     f"Rule shadow/overlap detected:\n"
                                     f"- Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}.\n"
-                                    f"If you believe your rule should replace or update this, please coordinate with the rule owner and/or open a Rule Update/Removal Issue. The CARID of app that owns conflicting firewall rule is after 'AUTO' in rule name of validation error"
+                                    f"- The name of the conflicting (existing) rule is: {rule_name}\n"
+                                    f"If you believe your rule should replace or update this, please coordinate with the rule owner and/or open a Rule Update/Removal Issue. The CARID of the app that owns the conflicting rule is after 'AUTO' in the rule name."
                                 )
 
 print("✅ Validation passed")
-
