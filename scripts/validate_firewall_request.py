@@ -88,4 +88,63 @@ for exist in existing:
     if normalize_rule(exist) == incoming:
         die("Duplicate rule: functionally identical rule already exists in firewall config.")
 
+# -- 7) Overlap Detection: CIDR and Port Overlap
+
+def cidr_overlap(cidr1, cidr2):
+    """True if cidr1 and cidr2 overlap at all."""
+    net1, net2 = ip_network(cidr1, strict=False), ip_network(cidr2, strict=False)
+    return net1.overlaps(net2)
+
+def port_range_expand(portstr):
+    """Turn '80' or '80-90' or list ['80', '443-445'] into a set of ports."""
+    ports = set()
+    if isinstance(portstr, list):
+        parts = portstr
+    else:
+        parts = [p.strip() for p in str(portstr).split(',')]
+    for p in parts:
+        if '-' in p:
+            start, end = map(int, p.split('-'))
+            ports.update(range(start, end+1))
+        else:
+            try:
+                ports.add(int(p))
+            except Exception:
+                continue
+    return ports
+
+def ports_overlap(new_ports, exist_ports):
+    """True if any port in new overlaps with existing set."""
+    return not new_ports.isdisjoint(exist_ports)
+
+new_srcs = [ip.strip() for ip in data["source_ip_s_or_cidr_s"].split(",")]
+new_dsts = [ip.strip() for ip in data["destination_ip_s_or_cidr_s"].split(",")]
+new_ports = port_range_expand(data["port_s"])
+new_proto = data["protocol"]
+new_dir = data["direction"].upper()
+
+for exist in existing:
+    exist_proto = (exist.get("protocol") or "").lower()
+    exist_dir = (exist.get("direction") or "").upper()
+
+    if exist_proto != new_proto or exist_dir != new_dir:
+        continue  # Only compare apples to apples
+
+    exist_srcs = exist.get("src_ip_ranges") or exist.get("source_ip_s_or_cidr_s", [])
+    exist_dsts = exist.get("dest_ip_ranges") or exist.get("destination_ip_s_or_cidr_s", [])
+    if isinstance(exist_srcs, str):
+        exist_srcs = [exist_srcs]
+    if isinstance(exist_dsts, str):
+        exist_dsts = [exist_dsts]
+
+    for ns in new_srcs:
+        for es in exist_srcs:
+            if cidr_overlap(ns, es):
+                for nd in new_dsts:
+                    for ed in exist_dsts:
+                        if cidr_overlap(nd, ed):
+                            exist_ports_set = port_range_expand(exist.get("ports") or exist.get("port_s", []))
+                            if ports_overlap(new_ports, exist_ports_set):
+                                die(f"Rule shadow/overlap detected: Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}. Please combine or update your rules.")
+
 print("✅ Validation passed")
