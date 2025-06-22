@@ -93,7 +93,7 @@ jobs:
           set -o pipefail
           exit_code=0
           > validation.log
-          tfvars_path="e1inetpolicy.auto.tfvars.json"
+          tfvars_path="automation.auto.tfvars.json"
           while IFS= read -r rule; do
             echo "Validating rule: $rule" | tee -a validation.log
             python3 scripts/validate_firewall_request.py "$rule" "$tfvars_path" 2>&1 | tee -a validation.log || exit_code=1
