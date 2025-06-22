@@ -163,6 +163,10 @@ new_ports = port_range_expand(get_ports(data))
 new_proto = data["protocol"]
 new_dir = data["direction"].upper()
 
+# Debug: Show the new and existing rule fields being compared
+print(f"DEBUG: Existing rules loaded: {json.dumps(existing, indent=2)}")
+print(f"DEBUG: New rule fields: srcs={new_srcs} dsts={new_dsts} ports={get_ports(data)} proto={new_proto} dir={new_dir}")
+
 for exist in existing:
     exist_proto = (exist.get("protocol") or "").lower()
     exist_dir = (exist.get("direction") or "").upper()
@@ -174,14 +178,15 @@ for exist in existing:
     exist_dsts = get_dsts(exist)
     exist_ports_set = port_range_expand(get_ports(exist))
 
-for ns in new_srcs:
-    for es in exist_srcs:
-        if cidr_overlap(ns, es):
-            for nd in new_dsts:
-                for ed in exist_dsts:
-                    if cidr_overlap(nd, ed):
-                        if ports_overlap(new_ports, exist_ports_set):
-                            print(f"DEBUG: Testing overlap: NEW srcs={ns} dsts={nd} ports={sorted(new_ports)} proto={new_proto} dir={new_dir}")
-                            print(f"DEBUG: Against EXISTING srcs={es} dsts={ed} ports={sorted(exist_ports_set)} proto={exist_proto} dir={exist_dir}")
-                            die(f"Rule shadow/overlap detected: Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}. Please combine or update your rules.")
+    for ns in new_srcs:
+        for es in exist_srcs:
+            if cidr_overlap(ns, es):
+                for nd in new_dsts:
+                    for ed in exist_dsts:
+                        if cidr_overlap(nd, ed):
+                            if ports_overlap(new_ports, exist_ports_set):
+                                print(f"DEBUG: Testing overlap: NEW srcs={ns} dsts={nd} ports={sorted(new_ports)} proto={new_proto} dir={new_dir}")
+                                print(f"DEBUG: Against EXISTING srcs={es} dsts={ed} ports={sorted(exist_ports_set)} proto={exist_proto} dir={exist_dir}")
+                                die(f"Rule shadow/overlap detected: Your rule {ns}->{nd} {new_proto}/{sorted(new_ports)} overlaps with existing rule {es}->{ed} {exist_proto}/{sorted(exist_ports_set)}. Please combine or update your rules.")
+
 print("✅ Validation passed")
