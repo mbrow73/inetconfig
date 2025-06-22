@@ -39,6 +39,14 @@ for key in required:
     if key not in data or not data[key].strip():
         die(f"Missing required field {key}")
 
+# -- 1a) Protocol must be lowercase in the issue template
+protocol = data["protocol"]
+if protocol != protocol.lower():
+    die("Protocol must be specified in all lowercase (e.g., 'tcp', 'udp', 'icmp').")
+
+if protocol not in ("tcp", "udp", "icmp"):
+    die("Protocol must be 'tcp', 'udp', or 'icmp' (all lowercase).")
+
 # -- 2) Validate IP/CIDRs
 for field in ("source_ip_s_or_cidr_s", "destination_ip_s_or_cidr_s"):
     for part in re.split(r'[,\s]+', data[field]):
@@ -53,9 +61,7 @@ for p in re.split(r'[,\s]+', data["port_s"]):
     if not port_re.match(p) or not (0 < int(p.split('-')[0]) <= 65535):
         die(f"Invalid port or range {p}")
 
-# -- 4) Validate protocol & direction
-if data["protocol"].upper() not in ("TCP", "UDP", "ICMP"):
-    die("Protocol must be TCP, UDP, or ICMP")
+# -- 4) Validate direction
 if data["direction"].upper() not in ("INGRESS", "EGRESS"):
     die("Direction must be INGRESS or EGRESS")
 
@@ -65,11 +71,14 @@ if not re.match(r'^REQ\d+$', data["request_id_reqid"]):
 
 # -- 6) Duplicate Rule Detection
 def normalize_rule(r):
+    # Always compare protocol in upper, but require lowercase on input for hygiene
+    proto = r.get("protocol", "")
+    proto_cmp = proto.upper() if proto else ""
     return {
         "src_ip_ranges": sorted([ip.strip() for ip in r.get("src_ip_ranges", r.get("source_ip_s_or_cidr_s", "")).split(",")]) if isinstance(r.get("src_ip_ranges", r.get("source_ip_s_or_cidr_s", "")), str) else sorted(r.get("src_ip_ranges", [])),
         "dest_ip_ranges": sorted([ip.strip() for ip in r.get("dest_ip_ranges", r.get("destination_ip_s_or_cidr_s", "")).split(",")]) if isinstance(r.get("dest_ip_ranges", r.get("destination_ip_s_or_cidr_s", "")), str) else sorted(r.get("dest_ip_ranges", [])),
         "ports": sorted([str(p).strip() for p in r.get("ports", r.get("port_s", "")).split(",")]) if isinstance(r.get("ports", r.get("port_s", "")), str) else sorted([str(p).strip() for p in r.get("ports", [])]),
-        "protocol": r.get("protocol", "").upper(),
+        "protocol": proto_cmp,
         "direction": r.get("direction", "").upper()
     }
 
