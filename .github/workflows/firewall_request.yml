@@ -163,7 +163,7 @@ jobs:
       - name: ✍️ Inject rules into tfvars
         if: steps.validate.outputs.exit_code == '0'
         run: |
-          python3 scripts/add_firewall_rule.py "$(cat parsed.json)" e1inetpolicy.auto.tfvars.json
+          python3 scripts/add_firewall_rule.py "$(cat parsed.json)" automation.auto.tfvars.json
 
       # 🔟 Terraform fmt & validate (only on success)
       - name: 🧹 Terraform fmt & validate
