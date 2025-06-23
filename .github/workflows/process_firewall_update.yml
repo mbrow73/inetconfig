@@ -15,11 +15,13 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'firewall-update-request')
 
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Save form inputs
-        run: echo "${{ toJson(github.event.inputs) }}" > inputs.json
+        run: |
+          # Use single quotes to ensure the JSON isn’t trimmed
+          echo '${{ toJson(github.event.inputs) }}' > inputs.json
 
       - name: Run Update Script
         id: change
@@ -43,4 +45,5 @@ jobs:
           title: "[Firewall] Update via ${{ steps.change.outputs.reqid }}"
           body: ${{ steps.change.outputs.pr_body }}
           add-paths: updated.auto.tfvars.json
-          labels: firewall-rule${{ steps.change.outputs.ownership_changed == 'true' && ',ownership-change' || '' }}
+          labels: |
+            firewall-rule${{ steps.change.outputs.ownership_changed == 'true' && ',ownership-change' || '' }}
