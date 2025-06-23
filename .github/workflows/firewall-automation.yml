@@ -1,0 +1,110 @@
+name: 🔒 Process Firewall Requests
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  process:
+    if: contains(github.event.issue.labels.*.name, 'firewall-request')
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 📝 Parse Issue, Generate Per-REQID JSON
+        id: parse_and_write
+        run: |
+          set -e
+          ISSUE_BODY="${{ github.event.issue.body }}"
+          # Extract REQID
+          REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | sed 's/.*: *//;s/\r//g')
+          CARID=$(echo "$ISSUE_BODY" | grep -i "CARID" | head -1 | sed 's/.*: *//;s/\r//g')
+          if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
+          if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
+          echo "REQID=$REQID" >> $GITHUB_OUTPUT
+
+          # Extract rules blocks (assumes template with repeated blocks)
+          RULES_BLOCKS=$(echo "$ISSUE_BODY" | awk '/^#### Rule/{if(x)print x;x=""}{x=x"\n"$0}END{if(x)print x}' | grep -v '^$' | sed '/^#### Rule/d')
+          if [ -z "$RULES_BLOCKS" ]; then echo "No rules found"; exit 1; fi
+
+          IDX=1
+          RULES_JSON=""
+
+          echo "$RULES_BLOCKS" | awk -v carid="$CARID" -v reqid="$REQID" '
+            BEGIN{RS="\n\n"}
+            {
+              name=""
+              src=""
+              dest=""
+              ports=""
+              proto=""
+              direction=""
+              justification=""
+              for(i=1;i<=NF;i++) {
+                line=$i
+                if(line~"New Source") src=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
+                if(line~"New Destination") dest=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
+                if(line~"New Port") ports=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
+                if(line~"New Protocol") proto=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
+                if(line~"New Direction") direction=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
+                if(line~"New Business Justification") justification=gensub(/.*: *([^`]+)$/,"\\1","g",line)
+              }
+              ruleidx=NR
+              rulename="AUTO-"reqid"-"carid"-"toupper(proto)"-"ports"-"ruleidx
+              rule = sprintf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}", rulename, justification, direction, src, dest, ports, tolower(proto), 1000+ruleidx)
+              if(RULES_JSON!="") RULES_JSON=RULES_JSON","
+              RULES_JSON=RULES_JSON rule
+            }
+            END { print RULES_JSON }
+          ' > rules.json
+
+          # Format into TFVars JSON
+          RULES_JSON=$(cat rules.json)
+          TFVARS="{\"auto_firewall_rules\": [${RULES_JSON}]}"
+          mkdir -p firewall-requests
+          echo "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
+
+      - name: ⏫ Create or Update Pull Request for NetSec
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: |
+            [Firewall Automation] Update rules for ${{ steps.parse_and_write.outputs.REQID }}
+          branch: firewall/${{ steps.parse_and_write.outputs.REQID }}-${{ github.event.issue.number }}
+          title: "Firewall request: ${{ steps.parse_and_write.outputs.REQID }} (Issue #${{ github.event.issue.number }})"
+          body: |
+            Automated firewall rules for REQID `${{ steps.parse_and_write.outputs.REQID }}`.
+            
+            **Summary:**
+            - Source: ${{ github.event.issue.user.login }}
+            - Related Issue: #${{ github.event.issue.number }}
+
+            **Rules:**  
+            _See the file `firewall-requests/${{ steps.parse_and_write.outputs.REQID }}.auto.tfvars.json` for full details._
+
+            > **NetSec:** Please review and merge if approved.  
+          add-paths: |
+            firewall-requests/${{ steps.parse_and_write.outputs.REQID }}.auto.tfvars.json
+          base: main
+
+      - name: 💬 Comment PR Link to Issue
+        if: steps.cpr.outputs.pull-request-url != ''
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
+            })
