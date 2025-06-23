@@ -1,3 +1,9 @@
+---
+name: "Firewall Rule Request"
+about: "Request new or updated GCP firewall rules"
+labels: ["firewall-request"]
+---
+
 ### Request ID (REQID): REQ123123
 
 ### CARID: 123123
