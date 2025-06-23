@@ -14,8 +14,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const body = context.payload.issue.body || "";
-            // Check for a unique phrase from your template to distinguish these issues.
-            if (body.includes('Firewall Rule Update/Removal Request')) {
+            // Use a unique phrase from your update/removal template.
+            // E.g. 'Firewall Rule Update/Removal Request' is usually the 'about:' field or first heading.
+            if (body.includes('Request an update or removal of an existing firewall rule')) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
