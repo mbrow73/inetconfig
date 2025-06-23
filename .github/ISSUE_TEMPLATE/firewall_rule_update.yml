@@ -1,9 +1,11 @@
+---                              # ← must start with frontmatter
 name: "Firewall Rule Update Request"
 description: "Update one existing firewall rule. For multiple updates, open this form multiple times."
 labels:
-  - "firewall-update-request"
+  - firewall-update-request
+---
 
-body:
+body:                           # ← after the closing --- begins your form schema
   - type: input
     id: reqid
     attributes:

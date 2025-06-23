@@ -1,7 +1,9 @@
+---
 name: "Firewall Rule Removal Request"
-description: "Remove one existing firewall rule. For multiple removals, open this form multiple times."
+description: "Remove one existing firewall rule…"
 labels:
-  - "firewall-remove-request"
+  - firewall-remove-request
+---
 
 body:
   - type: input
