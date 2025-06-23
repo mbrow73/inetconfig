@@ -45,7 +45,10 @@ jobs:
       - name: 🔎 Update/Remove Rule in tfvars (with validation)
         id: update
         run: |
-          python3 scripts/update_remove_firewall_rule.py parsed_update.json automation.auto.tfvars.json updated.auto.tfvars.json
+          python3 scripts/update_remove_firewall_rule.py \
+             parsed_update.json \
+             automation.auto.tfvars.json \
+             updated.auto.tfvars.json
 
       - name: 🧹 Terraform fmt & validate
         run: |

@@ -21,14 +21,30 @@ rule_blocks = re.split(r"#### Rule \d+", body)
 rules = []
 for block in rule_blocks[1:]:
     rule = {}
-    rule['existing_rule_name'] = extract_field(r"Existing Rule Name:\s*`?([^\n`]+)`?", block)
-    rule['action'] = extract_field(r"Action:\s*`?([a-zA-Z]+)`?", block, fallback="update").lower()
-    rule['new_source_ips'] = extract_field(r"New Source IP\(s\) or CIDR\(s\):\s*`?([^\n`]*)`?", block)
-    rule['new_destination_ips'] = extract_field(r"New Destination IP\(s\) or CIDR\(s\):\s*`?([^\n`]*)`?", block)
-    rule['new_ports'] = extract_field(r"New Port\(s\):\s*`?([^\n`]*)`?", block)
-    rule['new_protocol'] = extract_field(r"New Protocol:\s*`?([^\n`]*)`?", block)
-    rule['new_direction'] = extract_field(r"New Direction:\s*`?([^\n`]*)`?", block)
-    rule['new_justification'] = extract_field(r"New Business Justification:\s*([^\n]*)", block)
+    rule['existing_rule_name'] = extract_field(
+        r"Existing Rule Name:\s*`?([^\n`]+)`?", block
+    )
+    rule['action'] = extract_field(
+        r"Action:\s*`?([a-zA-Z]+)`?", block, fallback="update"
+    ).lower()
+    rule['new_source_ips'] = extract_field(
+        r"New Source IP\(s\) or CIDR\(s\):\s*`?([^\n`]*)`?", block
+    )
+    rule['new_destination_ips'] = extract_field(
+        r"New Destination IP\(s\) or CIDR\(s\):\s*`?([^\n`]*)`?", block
+    )
+    rule['new_ports'] = extract_field(
+        r"New Port\(s\):\s*`?([^\n`]*)`?", block
+    )
+    rule['new_protocol'] = extract_field(
+        r"New Protocol:\s*`?([^\n`]*)`?", block
+    )
+    rule['new_direction'] = extract_field(
+        r"New Direction:\s*`?([^\n`]*)`?", block
+    )
+    rule['new_justification'] = extract_field(
+        r"New Business Justification:\s*([^\n]*)", block
+    )
     rules.append(rule)
 
 out = {
