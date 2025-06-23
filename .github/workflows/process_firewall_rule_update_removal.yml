@@ -20,6 +20,7 @@ jobs:
 
       - name: "💾 Save form inputs"
         run: |
+          # Must use double-quotes so the expression is evaluated
           echo "${{ toJson(github.event.inputs) }}" > inputs.json
 
       - name: "🔎 Update/Remove Rule in tfvars"
@@ -40,7 +41,6 @@ jobs:
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Use the reqid and action outputs directly—no pipes needed
           branch: rule-change-${{ steps.change.outputs.reqid }}
           title: "[Firewall] ${{ steps.change.outputs.action }} via ${{ steps.change.outputs.reqid }}"
           body: ${{ steps.change.outputs.pr_body }}
