@@ -15,7 +15,7 @@ Each rule object must include:
   - direction
   - business_justification
 
-Outputs appended rules under `auto_firewall_rules` in the tfvars file.
+Outputs appended rules under auto_firewall_rules in the tfvars file.
 """
 
 def main():
