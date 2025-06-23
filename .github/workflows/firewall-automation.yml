@@ -22,13 +22,14 @@ jobs:
 
       - name: 📝 Parse Issue, Generate Per-REQID JSON
         id: parse_and_write
+        shell: bash
         run: |
           set -e
 
-          # Use the real issue body in CI
+          # Use the actual issue body from the GitHub Action context
           ISSUE_BODY="${{ github.event.issue.body }}"
 
-          # Extract REQID and CARID (what's between backticks after each label)
+          # Extract REQID and CARID (from line *after* heading, inside backticks)
           REQID=$(echo "$ISSUE_BODY" | awk '/Request ID/{getline; gsub(/`/,""); print $0}' | head -1 | xargs)
           CARID=$(echo "$ISSUE_BODY" | awk '/CARID:/{getline; gsub(/`/,""); print $0}' | head -1 | xargs)
           if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
@@ -58,8 +59,8 @@ jobs:
             }
           ')
 
-          RULES_JSON=""
-          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v idx=1 '
+          # Build the rules.json: each rule as a JSON object, one per line
+          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" '
             BEGIN{RS="@@@"}
             NF{
               src=""; dst=""; ports=""; proto=""; dir=""; just="";
