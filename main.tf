@@ -12,23 +12,40 @@ data "local_file" "requests" {
 }
 
 locals {
-  all_requests = flatten([
-    for f in data.local_file.requests :
-    [ for idx, r in jsondecode(f.content).rules :
-      merge(
-        r,
-        {
-          carid        = jsondecode(f.content).carid,
-          request_id   = jsondecode(f.content).request_id_reqid,
-          index        = idx + 1
-        }
-      )
+  # 1) Turn each request JSON into a list of fully‐shaped rule objects
+  auto_rules = flatten([
+    for file in data.local_file.requests : [
+      for rule in jsondecode(file.content).rules : {
+        # Generate the unique name: AUTO-CARID-REQID-PRIO-PROTO-PORTS
+        name                   = format(
+          "AUTO-%s-%s-%d-%s-%s",
+          jsondecode(file.content).carid,
+          jsondecode(file.content).request_id_reqid,
+          rule.priority,
+          upper(rule.protocol),
+          replace(rule.port_s, ",", "-")
+        )
+
+        description            = rule.business_justification
+        priority               = rule.priority
+        direction              = rule.direction
+        action                 = "allow"
+        security_profile_group = null
+        enable_logging         = true
+
+        src_ip_ranges          = split(",", rule.source_ip_s_or_cidr_s)
+        dest_ip_ranges         = split(",", rule.destination_ip_s_or_cidr_s)
+        ports                  = split(",", rule.port_s)
+
+        protocol               = upper(rule.protocol)
+        tls_inspect            = false
+      }
     ]
   ])
-  
-  # Combine auto-generated with manual rules
+
+  # 2) Combine with any manual rules
   inet_firewall_rules = concat(
-    local.all_requests,
+    local.auto_rules,
     var.manual_firewall_rules
   )
 }
