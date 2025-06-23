@@ -1,4 +1,4 @@
-name: "🔄 Process Firewall Rule Change"
+name: "🔄 Process Firewall Rule Update"
 
 on:
   issues:
@@ -10,40 +10,37 @@ permissions:
   pull-requests: write
 
 jobs:
-  process:
+  update:
     runs-on: ubuntu-latest
-    if: contains(github.event.issue.labels.*.name, 'firewall-change-request')
+    if: contains(github.event.issue.labels.*.name, 'firewall-update-request')
 
     steps:
-      - name: "⬇️ Checkout repo"
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: "💾 Save form inputs"
-        run: |
-          # Must use double-quotes so the expression is evaluated
-          echo "${{ toJson(github.event.inputs) }}" > inputs.json
+      - name: Save form inputs
+        run: echo "${{ toJson(github.event.inputs) }}" > inputs.json
 
-      - name: "🔎 Update/Remove Rule in tfvars"
+      - name: Run Update Script
         id: change
         run: |
-          python3 scripts/update_remove_firewall_rule.py \
+          python3 scripts/update_firewall_rule.py \
             inputs.json \
             automation.auto.tfvars.json \
             updated.auto.tfvars.json
 
-      - name: "🧹 Terraform fmt & validate"
+      - name: Terraform fmt & validate
         run: |
           terraform init -backend=false
           terraform fmt -recursive
           terraform validate
 
-      - name: "🔀 Create Pull Request"
+      - name: Create Pull Request
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          branch: rule-change-${{ steps.change.outputs.reqid }}
-          title: "[Firewall] ${{ steps.change.outputs.action }} via ${{ steps.change.outputs.reqid }}"
+          branch: update-${{ steps.change.outputs.reqid }}
+          title: "[Firewall] Update via ${{ steps.change.outputs.reqid }}"
           body: ${{ steps.change.outputs.pr_body }}
-          commit-message: "Firewall rule ${{ steps.change.outputs.action }} per ${{ steps.change.outputs.reqid }}"
           add-paths: updated.auto.tfvars.json
-          labels: ${{ steps.change.outputs.ownership_changed == 'true' && 'firewall-rule,ownership-change' || 'firewall-rule' }}
+          labels: firewall-rule${{ steps.change.outputs.ownership_changed == 'true' && ',ownership-change' || '' }}
