@@ -82,7 +82,7 @@ jobs:
                   dir=line; sub(/.*: /,"",dir); gsub(/^[ \t]+|[ \t]+$/,"",dir)
                 }
                 if(line ~ /New Business Justification/) {
-                  just=lines[i+1]; gsub(/^[ \t]+|[ \t]+$/,"",just)
+                  just=line; sub(/.*: /,"",just); gsub(/^[ \t]+|[ \t]+$/,"",just)
                 }
               }
               printf("{\"name\": \"AUTO-%s-%s-%s-%s-%d\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}\n",

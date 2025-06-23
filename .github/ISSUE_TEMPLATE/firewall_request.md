@@ -5,7 +5,6 @@ labels: ["firewall-request"]
 ---
 
 ### Request ID (REQID): REQ123123
-
 ### CARID: 123123
 
 #### Rule 1
