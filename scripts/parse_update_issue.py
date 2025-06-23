@@ -12,15 +12,21 @@ carid = ""
 rules = []
 current = None
 
-for line in lines:
+for raw in lines:
+    line = raw.strip()
+
     # Top-level fields
     if line.startswith("### Request ID"):
-        reqid = line.split(":",1)[1].strip()
-    elif line.startswith("### CARID"):
-        carid = line.split(":",1)[1].strip()
+        parts = line.split(":",1)
+        reqid = parts[1].strip() if len(parts)>1 else ""
+        continue
+    if line.startswith("### CARID"):
+        parts = line.split(":",1)
+        carid = parts[1].strip() if len(parts)>1 else ""
+        continue
 
-    # Start a new rule block
-    elif line.startswith("#### Rule"):
+    # Start new rule
+    if line.startswith("#### Rule"):
         if current:
             rules.append(current)
         current = {
@@ -33,33 +39,29 @@ for line in lines:
             "new_direction": "",
             "new_justification": ""
         }
+        continue
 
-    # Inside a rule block, parse bullets
-    elif current is not None and line.strip().startswith("🔹"):
-        # Remove bullet and any leading space
-        content = line.strip()[1:].strip()
-        # Split once at colon
-        if ":" not in content:
-            continue
-        key, val = content.split(":",1)
-        key = key.strip()
-        val = val.strip().strip("`")
-        # Map to our JSON fields
-        mapping = {
-            "Existing Rule Name": "existing_rule_name",
-            "Action": "action",
-            "New Source IP(s) or CIDR(s)": "new_source_ips",
-            "New Destination IP(s) or CIDR(s)": "new_destination_ips",
-            "New Port(s)": "new_ports",
-            "New Protocol": "new_protocol",
-            "New Direction": "new_direction",
-            "New Business Justification": "new_justification"
-        }
-        field = mapping.get(key)
-        if field is not None:
-            current[field] = val
+    # Inside a rule block: look for each label
+    if current is not None:
+        if "Existing Rule Name:" in line:
+            current["existing_rule_name"] = line.split("Existing Rule Name:",1)[1].strip().strip("` ")
+        elif line.startswith("🔹 Action:") or line.startswith("- Action:") or " Action:" in line:
+            if "Action:" in line:
+                current["action"] = line.split("Action:",1)[1].strip().strip("` ")
+        elif "New Source IP" in line:
+            current["new_source_ips"] = line.split(":",1)[1].strip().strip("` ")
+        elif "New Destination IP" in line:
+            current["new_destination_ips"] = line.split(":",1)[1].strip().strip("` ")
+        elif "New Port" in line:
+            current["new_ports"] = line.split(":",1)[1].strip().strip("` ")
+        elif "New Protocol" in line:
+            current["new_protocol"] = line.split(":",1)[1].strip().strip("` ")
+        elif "New Direction" in line:
+            current["new_direction"] = line.split(":",1)[1].strip().strip("` ")
+        elif "New Business Justification" in line:
+            current["new_justification"] = line.split(":",1)[1].strip()
 
-# Append last rule
+# append last rule
 if current:
     rules.append(current)
 
