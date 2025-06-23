@@ -24,51 +24,74 @@ jobs:
         id: parse_and_write
         run: |
           set -e
+
+          # Use the real issue body in CI
           ISSUE_BODY="${{ github.event.issue.body }}"
-          # Extract REQID
-          REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | sed 's/.*: *//;s/\r//g')
-          CARID=$(echo "$ISSUE_BODY" | grep -i "CARID" | head -1 | sed 's/.*: *//;s/\r//g')
+
+          # Extract REQID and CARID (what's between backticks after each label)
+          REQID=$(echo "$ISSUE_BODY" | awk '/Request ID/{getline; gsub(/`/,""); print $0}' | head -1 | xargs)
+          CARID=$(echo "$ISSUE_BODY" | awk '/CARID:/{getline; gsub(/`/,""); print $0}' | head -1 | xargs)
           if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
           if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
           echo "REQID=$REQID" >> $GITHUB_OUTPUT
 
-          # Extract rules blocks (assumes template with repeated blocks)
-          RULES_BLOCKS=$(echo "$ISSUE_BODY" | awk '/^#### Rule/{if(x)print x;x=""}{x=x"\n"$0}END{if(x)print x}' | grep -v '^$' | sed '/^#### Rule/d')
-          if [ -z "$RULES_BLOCKS" ]; then echo "No rules found"; exit 1; fi
-
-          IDX=1
-          RULES_JSON=""
-
-          echo "$RULES_BLOCKS" | awk -v carid="$CARID" -v reqid="$REQID" '
-            BEGIN{RS="\n\n"}
-            {
-              name=""
-              src=""
-              dest=""
-              ports=""
-              proto=""
-              direction=""
-              justification=""
-              for(i=1;i<=NF;i++) {
-                line=$i
-                if(line~"New Source") src=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
-                if(line~"New Destination") dest=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
-                if(line~"New Port") ports=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
-                if(line~"New Protocol") proto=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
-                if(line~"New Direction") direction=gensub(/.*: *`?([^`]+)`?.*/,"\\1","g",line)
-                if(line~"New Business Justification") justification=gensub(/.*: *([^`]+)$/,"\\1","g",line)
+          # Extract each rule block (splitting on #### Rule lines)
+          RULES=$(echo "$ISSUE_BODY" | awk '
+            BEGIN{rule=0}
+            /^#### Rule/{
+              if(rule){
+                print rule_block "\n@@@"
               }
-              ruleidx=NR
-              rulename="AUTO-"reqid"-"carid"-"toupper(proto)"-"ports"-"ruleidx
-              rule = sprintf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}", rulename, justification, direction, src, dest, ports, tolower(proto), 1000+ruleidx)
-              if(RULES_JSON!="") RULES_JSON=RULES_JSON","
-              RULES_JSON=RULES_JSON rule
+              rule_block = ""
+              rule=1
+              next
             }
-            END { print RULES_JSON }
+            {
+              if(rule){
+                rule_block = rule_block $0 "\n"
+              }
+            }
+            END{
+              if(rule){
+                print rule_block
+              }
+            }
+          ')
+
+          RULES_JSON=""
+          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v idx=1 '
+            BEGIN{RS="@@@"}
+            NF{
+              src=""; dst=""; ports=""; proto=""; dir=""; just="";
+              n=split($0, lines, "\n");
+              for(i=1;i<=n;i++){
+                line=lines[i];
+                if(line ~ /New Source/) {
+                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); src=line
+                }
+                if(line ~ /New Destination/) {
+                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); dst=line
+                }
+                if(line ~ /New Port/) {
+                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); ports=line
+                }
+                if(line ~ /New Protocol/) {
+                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); proto=line
+                }
+                if(line ~ /New Direction/) {
+                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); dir=line
+                }
+                if(line ~ /New Business Justification/) {
+                  just=lines[i+1]
+                }
+              }
+              printf("{\"name\": \"AUTO-%s-%s-%s-%s-%d\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}\n",
+                reqid, carid, toupper(proto), ports, NR, just, dir, src, dst, ports, tolower(proto), 1000+NR)
+            }
           ' > rules.json
 
-          # Format into TFVars JSON
-          RULES_JSON=$(cat rules.json)
+          # Collapse all rule JSON lines into a JSON array
+          RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\": [${RULES_JSON}]}"
           mkdir -p firewall-requests
           echo "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
@@ -83,7 +106,7 @@ jobs:
           title: "Firewall request: ${{ steps.parse_and_write.outputs.REQID }} (Issue #${{ github.event.issue.number }})"
           body: |
             Automated firewall rules for REQID `${{ steps.parse_and_write.outputs.REQID }}`.
-            
+
             **Summary:**
             - Source: ${{ github.event.issue.user.login }}
             - Related Issue: #${{ github.event.issue.number }}
