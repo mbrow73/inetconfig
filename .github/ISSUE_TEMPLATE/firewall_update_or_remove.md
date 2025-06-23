@@ -7,7 +7,10 @@ labels: ["firewall-update-request"]
 ### Request ID (REQID): REQ123123
 ### CARID: 123123
 
-<!-- For each rule you want to update or remove, copy the section below -->
+<!-- For each rule you want to update or remove, copy the section below
+
+For remove, only Existing Rule Name and Action are required. For update, fill only the fields you want to change.
+ -->
 
 #### Rule 1
 🔹 Existing Rule Name: AUTO-REQ123123-123123-TCP-443-1  
