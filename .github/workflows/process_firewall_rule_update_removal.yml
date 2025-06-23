@@ -20,16 +20,14 @@ jobs:
 
       - name: "💾 Save issue body to file"
         run: |
-          # Use printf so we don’t accidentally execute bullets as commands
+          # Use printf so bullets don’t execute
           printf '%s\n' "${{ github.event.issue.body }}" > issue_body.md
 
       - name: "🟡 Debug: Print raw issue body"
         run: |
-          echo "---------------------------"
-          echo "RAW ISSUE BODY START"
+          echo "---- RAW ISSUE BODY START ----"
           cat issue_body.md
-          echo "RAW ISSUE BODY END"
-          echo "---------------------------"
+          echo "---- RAW ISSUE BODY END ----"
 
       - name: "📝 Parse Issue (to JSON)"
         run: |
@@ -37,11 +35,9 @@ jobs:
 
       - name: "🟡 Debug: Print parsed update JSON"
         run: |
-          echo "---------------------------"
-          echo "PARSED UPDATE JSON START"
+          echo "---- PARSED UPDATE JSON START ----"
           cat parsed_update.json
-          echo "PARSED UPDATE JSON END"
-          echo "---------------------------"
+          echo "---- PARSED UPDATE JSON END ----"
 
       - name: "🔎 Update/Remove Rule in tfvars (with validation)"
         id: update
