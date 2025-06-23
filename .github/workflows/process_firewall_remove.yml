@@ -1,0 +1,45 @@
+name: "🗑️ Process Firewall Rule Removal"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  remove:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'firewall-remove-request')
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Save inputs
+        run: echo "${{ toJson(github.event.inputs) }}" > inputs.json
+
+      - name: Run Removal Script
+        id: change
+        run: |
+          python3 scripts/remove_firewall_rule.py \
+            inputs.json \
+            automation.auto.tfvars.json \
+            updated.auto.tfvars.json
+
+      - name: Terraform fmt & validate
+        run: |
+          terraform init -backend=false
+          terraform fmt -recursive
+          terraform validate
+
+      - name: Create PR
+        uses: peter-evans/create-pull-request@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: remove-${{ steps.change.outputs.reqid }}
+          title: "[Firewall] Removal via ${{ steps.change.outputs.reqid }}"
+          body: ${{ steps.change.outputs.pr_body }}
+          add-paths: updated.auto.tfvars.json
+          labels: firewall-rule,removal
