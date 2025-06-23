@@ -20,8 +20,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Save issue body
-        run: echo "${{ github.event.issue.body }}" > issue_body.md
+      - name: Save raw issue body
+        run: |
+          cat << 'EOF' > issue_body.md
+          ${{ github.event.issue.body }}
+          EOF
 
       - name: Run update/remove handler
         id: handler

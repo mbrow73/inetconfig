@@ -26,21 +26,21 @@ if len(sys.argv) != 4:
 
 body = open(sys.argv[1], encoding='utf-8').read()
 
-# Extract REQID & CARID
+# 1) Extract REQID & CARID
 m = re.search(r'Request ID \(REQID\):\s*(REQ\d+)', body)
 reqid = m.group(1) if m else die("Missing or invalid REQID")
 m = re.search(r'CARID:\s*([A-Za-z0-9_-]+)', body)
 carid = m.group(1) if m else die("Missing CARID")
 
-# Split into rule blocks
+# 2) Split into blocks by the '#### Rule' header
 blocks = re.split(r'#### Rule', body)
 if len(blocks) < 2:
     die("No ‘#### Rule’ blocks found")
 
-# Load existing rules
+# 3) Load existing rules
 tfvars = json.load(open(sys.argv[2]))
 all_rules = sum((tfvars.get(k, []) for k in
-                 ["inet_firewall_rules", "auto_firewall_rules", "manual_firewall_rules"]), [])
+                 ["inet_firewall_rules","auto_firewall_rules","manual_firewall_rules"]), [])
 by_name = {r["name"]: r for r in all_rules}
 
 updates, removals, pr_lines = [], [], []
@@ -48,23 +48,17 @@ ownership_changed = False
 
 for blk in blocks[1:]:
     text = blk.strip()
-    # If there’s a “New Source” line, it’s an update
+    # Update if it has a “New Source” line, otherwise removal
     if '🔹 **New Source**' in text:
         get = lambda pat: re.search(pat, text) and re.search(pat, text).group(1).strip()
         name = get(r'🔹 \*\*Existing Name\*\*:\s*`([^`]+)`') \
                or die("Missing Existing Name in update block")
-        src  = get(r'🔹 \*\*New Source\*\*:\s*`([^`]+)`') \
-               or die(f"Missing New Source for {name}")
-        dst  = get(r'🔹 \*\*New Destination\*\*:\s*`([^`]+)`') \
-               or die(f"Missing New Destination for {name}")
-        pts  = get(r'🔹 \*\*New Ports\*\*:\s*`([^`]+)`') \
-               or die(f"Missing New Ports for {name}")
-        proto= get(r'🔹 \*\*New Protocol\*\*:\s*`([^`]+)`') \
-               or die(f"Missing New Protocol for {name}")
-        direc= get(r'🔹 \*\*New Direction\*\*:\s*`([^`]+)`') \
-               or die(f"Missing New Direction for {name}")
-        just = get(r'🔹 \*\*New Justification\*\*:\s*(.+)') \
-               or die(f"Missing Justification for {name}")
+        src  = get(r'🔹 \*\*New Source\*\*:\s*`([^`]+)`')     or die(f"Missing New Source for {name}")
+        dst  = get(r'🔹 \*\*New Destination\*\*:\s*`([^`]+)`') or die(f"Missing New Destination for {name}")
+        pts  = get(r'🔹 \*\*New Ports\*\*:\s*`([^`]+)`')       or die(f"Missing New Ports for {name}")
+        proto= get(r'🔹 \*\*New Protocol\*\*:\s*`([^`]+)`')    or die(f"Missing New Protocol for {name}")
+        direc= get(r'🔹 \*\*New Direction\*\*:\s*`([^`]+)`')   or die(f"Missing New Direction for {name}")
+        just = get(r'🔹 \*\*New Justification\*\*:\s*(.+)')     or die(f"Missing Justification for {name}")
 
         # Validate
         if not all(valid_cidr(x) for x in src.split(',')):
@@ -104,7 +98,7 @@ for blk in blocks[1:]:
         )
 
     else:
-        # Removal
+        # Removal block
         get = lambda pat: re.search(pat, text) and re.search(pat, text).group(1).strip()
         name = get(r'🔹 \*\*Existing Name\*\*:\s*`([^`]+)`') \
                or die("Missing Existing Name in removal block")
@@ -115,7 +109,7 @@ for blk in blocks[1:]:
         removals.append(name)
         pr_lines.append(f"- **Remove** `{name}`\n  Justification: {just}")
 
-# Rewrite tfvars
+# 4) Rebuild your tfvars list
 final = []
 for r in all_rules:
     if r["name"] in removals:
@@ -126,7 +120,8 @@ for r in all_rules:
 tfvars["auto_firewall_rules"] = final
 json.dump(tfvars, open(sys.argv[3], "w"), indent=2)
 
-# Outputs
+# 5) Emit outputs for the PR step
 print(f"::set-output name=reqid::{reqid}")
 print(f"::set-output name=pr_body::{chr(10).join(pr_lines)}")
 print(f"::set-output name=ownership_changed::{str(ownership_changed).lower()}")
+print("✅ Done.")
