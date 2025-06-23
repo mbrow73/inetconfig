@@ -26,7 +26,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # 2️⃣ Parse the Issue into JSON (and extract CARID + rules[])
+      # 2️⃣ Parse the Issue into JSON
       - name: 📝 Parse issue into JSON (and CARID)
         id: parse
         uses: actions/github-script@v6
@@ -34,8 +34,8 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
-            // (your existing parsing logic, unchanged)
-            // returns JSON.stringify({ carid, rules });
+            // your existing parsing logic, which ends with:
+            return JSON.stringify({ carid, rules });
 
       # 3️⃣ Persist the parsed payload
       - name: 💾 Save parsed JSON
@@ -71,7 +71,12 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const errs = require('fs').readFileSync('validation.log','utf8');
-            await github.rest.issues.createComment({ /* your existing body */ });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `⚠️ **Validation failed**:\n\`\`\`\n${errs}\n\`\`\``
+            });
 
       - name: 🛑 Close Issue on validation failure
         if: steps.validate.outputs.exit_code != '0'
@@ -79,11 +84,16 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            await github.rest.issues.update({ /* your existing close */ });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              state: 'closed'
+            });
 
       - name: ⏭️ Skip remaining steps on validation error
         if: steps.validate.outputs.exit_code != '0'
-        run: echo "Validation errors detected; skipping inject & PR."
+        run: echo "Skipping inject & PR."
 
       # 7️⃣ Build the PR body
       - name: ✨ Build PR body
@@ -94,28 +104,30 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
-            // (your existing build-PR-body logic)
+            // your existing build-PR-body logic
 
-      # 8️⃣ Write a per-request JSON (assigning unique priorities)
+      # 8️⃣ Assign unique priorities & write per-request JSON
       - name: ✍️ Assign priorities & write per-request JSON
         if: steps.validate.outputs.exit_code == '0'
         run: |
+          mkdir -p firewall_requests
           python3 - << 'EOF'
           import json, glob
           from pathlib import Path
 
-          # Load this request
-          parsed = json.loads("""${{ steps.parse.outputs.result }}""")
+          # 1) Load this request
+          parsed = json.load(open("parsed.json"))
 
-          # Gather existing priorities from manual.tfvars and prior requests
+          # 2) Gather existing priorities
           prios = set()
+          # 2a) From manual rules
           try:
               man = json.load(open("manual.auto.tfvars.json"))
               for r in man.get("manual_firewall_rules", []):
                   prios.add(r.get("priority", 0))
           except FileNotFoundError:
               pass
-
+          # 2b) From prior auto-request files
           for fn in glob.glob("firewall_requests/*.json"):
               try:
                   data = json.load(open(fn))
@@ -124,26 +136,26 @@ jobs:
               except Exception:
                   continue
 
-          # Start assigning at max + 1 (default baseline 1000)
+          # 3) Compute starting priority
           max_prio = max(prios) if prios else 1000
 
-          # Build output object
+          # 4) Assign & collect
           output = {"carid": parsed["carid"], "rules": []}
-          for idx, rule in enumerate(parsed["rules"], start=1):
+          for rule in parsed["rules"]:
               max_prio += 1
               rule["priority"] = max_prio
               output["rules"].append(rule)
 
-          # Write one JSON per request
-          Path("firewall_requests").mkdir(exist_ok=True)
+          # 5) Write file
           reqid = parsed["rules"][0]["request_id_reqid"]
-          fname = f"firewall_requests/{reqid}.json"
-          with open(fname, "w") as f:
+          out_path = Path("firewall_requests") / f"{reqid}.json"
+          with open(out_path, "w") as f:
               json.dump(output, f, indent=2)
-          print(f"Wrote {fname} with priorities {[r['priority'] for r in output['rules']]}")
+          print(f"Wrote {out_path}, priorities:",
+                [r["priority"] for r in output["rules"]])
           EOF
 
-      # 9️⃣ (Optional) Terraform fmt & validate—your Terraform now reads from firewall_requests/
+      # 9️⃣ Terraform fmt & validate (optional)
       - name: 🧹 Terraform fmt & validate
         if: steps.validate.outputs.exit_code == '0'
         env:
