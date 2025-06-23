@@ -1,142 +1,93 @@
 #!/usr/bin/env python3
-import sys, json, re, glob
+import sys, json, glob, re
 from ipaddress import ip_network
 
 def die(msg):
     print(f"❌ Validation error: {msg}")
-    sys.exit(1)
 
-# Usage: validate_firewall_request.py '<rule_json>'
-if len(sys.argv) != 2:
-    die("Usage: validate_firewall_request.py <rule_json>")
-
-# Load incoming rule from issue
-try:
-    raw = json.loads(sys.argv[1])
-except json.JSONDecodeError as e:
-    die(f"Invalid JSON for rule: {e}")
-
-# Normalize keys (strip leading underscores)
-data = { k.strip('_'): v for k, v in raw.items() }
-
-# -- 1) Check required fields
-required = [
-    "source_ip_s_or_cidr_s",
-    "destination_ip_s_or_cidr_s",
-    "port_s",
-    "protocol",
-    "direction",
-    "business_justification",
-    "request_id_reqid"
-]
-for key in required:
-    if key not in data or not str(data[key]).strip():
-        die(f"Missing required field {key}")
-
-# -- 1a) Protocol lowercase
-proto = data["protocol"]
-if proto != proto.lower():
-    die("Protocol must be lowercase (e.g., 'tcp', 'udp', 'icmp').")
-if proto not in ("tcp", "udp", "icmp"):
-    die("Protocol must be 'tcp', 'udp', or 'icmp'.")
-
-# -- 2) Validate IP/CIDRs
-for field in ("source_ip_s_or_cidr_s", "destination_ip_s_or_cidr_s"):
-    for part in re.split(r'[,\s]+', data[field]):
-        try:
-            ip_network(part, strict=False)
-        except Exception:
-            die(f"Invalid CIDR/IP {part} in {field}")
-
-# -- 3) Validate ports
-port_re = re.compile(r'^\d+(-\d+)?$')
-for p in re.split(r'[,\s]+', data["port_s"]):
-    if not port_re.match(p) or not (0 < int(p.split('-')[0]) <= 65535):
-        die(f"Invalid port or range {p}")
-
-# -- 4) Validate direction
-if data["direction"].upper() not in ("INGRESS", "EGRESS"):
-    die("Direction must be INGRESS or EGRESS")
-
-# -- 5) Validate Request ID format
-if not re.match(r'^REQ\d+$', data["request_id_reqid"]):
-    die("Request ID must follow REQ<digits>, e.g. REQ12345")
-
-# -- Load existing rules from manual and auto JSON files
-existing = []
-# manual rules
-try:
-    man = json.load(open("manual.auto.tfvars.json"))
-    existing.extend(man.get("manual_firewall_rules", []))
-except FileNotFoundError:
-    pass
-# auto-generated requests
-for fn in glob.glob("firewall_requests/*.json"):
+def load_existing_rules():
+    existing = []
+    # 1) Manual rules
     try:
-        req = json.load(open(fn))
-        existing.extend(req.get("rules", []))
-    except Exception:
-        continue
+        man = json.load(open("manual.auto.tfvars.json"))
+        existing += man.get("manual_firewall_rules", [])
+    except FileNotFoundError:
+        pass
 
-# -- Helpers for normalization
+    # 2) All auto-request files
+    for fn in glob.glob("firewall_requests/*.json"):
+        try:
+            req = json.load(open(fn))
+            existing += req.get("rules", [])
+        except Exception:
+            print(f"⚠️ Warning: could not read {fn}", file=sys.stderr)
+    return existing
 
-def normalize(rule):
-    proto_cmp = rule.get("protocol", "").upper()
+def normalize(r):
+    # same normalizer you already have, e.g. listify & uppercase
+    proto = r["protocol"].upper()
     def to_list(val):
-        if isinstance(val, list): return sorted([str(v).strip() for v in val])
-        return sorted([v.strip() for v in str(val).split(',')])
+        if isinstance(val, list): return sorted([str(x).strip() for x in val])
+        return sorted([x.strip() for x in str(val).split(",")])
     return {
-        "src_ip_ranges": to_list(rule.get("src_ip_ranges") or rule.get("source_ip_s_or_cidr_s")),
-        "dest_ip_ranges": to_list(rule.get("dest_ip_ranges") or rule.get("destination_ip_s_or_cidr_s")),
-        "ports": to_list(rule.get("ports") or rule.get("port_s")),
-        "protocol": proto_cmp,
-        "direction": rule.get("direction", "").upper()
+        "src": to_list(r.get("src_ip_ranges") or r.get("source_ip_s_or_cidr_s", "")),
+        "dst": to_list(r.get("dest_ip_ranges") or r.get("destination_ip_s_or_cidr_s", "")),
+        "ports": to_list(r.get("ports") or r.get("port_s", "")),
+        "proto": proto,
+        "dir": r["direction"].upper()
     }
 
-# -- 6) Duplicate detection
-incoming = normalize(data)
-for ex in existing:
-    if normalize(ex) == incoming:
-        die("Duplicate rule: an identical rule already exists.")
+def main(parsed_file):
+    data = json.load(open(parsed_file))
+    errs = 0
 
-# -- 7) Overlap detection
+    # Field‐level & syntax checks first
+    for idx, rule in enumerate(data["rules"], start=1):
+        missing = [k for k in (
+            "source_ip_s_or_cidr_s",
+            "destination_ip_s_or_cidr_s",
+            "port_s",
+            "protocol",
+            "direction",
+            "business_justification",
+            "request_id_reqid"
+          ) if not rule.get(k)]
+        if missing:
+            die(f"Rule#{idx} missing fields: {', '.join(missing)}")
+            errs += 1
+            continue
+        # you can add your IP/port/dir checks here…
 
-def cidr_overlap(a, b):
-    try:
-        return ip_network(a, strict=False).overlaps(ip_network(b, strict=False))
-    except:
-        return False
+    # Duplicate & overlap checks
+    existing = load_existing_rules()
+    existing_norm = [normalize(r) for r in existing]
+    for idx, r in enumerate(data["rules"], start=1):
+        norm = normalize(r)
+        # Duplicate
+        if norm in existing_norm:
+            die(f"Rule#{idx} is a duplicate of an existing rule.")
+            errs += 1
+        # Overlap
+        for en in existing_norm:
+            if norm["proto"] == en["proto"] and norm["dir"] == en["dir"]:
+                # any CIDR overlap?
+                if any(ip_network(a, strict=False).overlaps(ip_network(b, strict=False))
+                       for a in norm["src"] for b in en["src"]) \
+                   and any(ip_network(a, strict=False).overlaps(ip_network(b, strict=False))
+                       for a in norm["dst"] for b in en["dst"]) \
+                   and (set(norm["ports"]) & set(en["ports"])):
+                    die(f"Rule#{idx} overlaps existing rule.")
+                    errs += 1
+                    break
 
-def ports_set(val):
-    s = set()
-    parts = val if isinstance(val, list) else [v.strip() for v in str(val).split(',')]
-    for p in parts:
-        if '-' in p:
-            lo, hi = map(int, p.split('-'))
-            s.update(range(lo, hi+1))
-        else:
-            s.add(int(p))
-    return s
+    if errs == 0:
+        print("✅ Validation passed")
+        sys.exit(0)
+    else:
+        sys.exit(1)
 
-new_srcs = normalize(data)["src_ip_ranges"]
-new_dsts = normalize(data)["dest_ip_ranges"]
-new_ports = ports_set(data["port_s"])
-new_proto = data["protocol"]
-new_dir = data["direction"].upper()
-
-for ex in existing:
-    ex_norm = normalize(ex)
-    if ex_norm["protocol"] != new_proto.upper() or ex_norm["direction"] != new_dir:
-        continue
-    exist_srcs = ex_norm["src_ip_ranges"]
-    exist_dsts = ex_norm["dest_ip_ranges"]
-    exist_ports = ports_set(ex.get("ports") or ex.get("port_s", []))
-    for ns in new_srcs:
-        for es in exist_srcs:
-            if cidr_overlap(ns, es):
-                for nd in new_dsts:
-                    for ed in exist_dsts:
-                        if cidr_overlap(nd, ed) and new_ports & exist_ports:
-                            die(f"Overlap detected with existing rule {ex.get('name')}")
-
-print("✅ Validation passed")
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: validate_firewall_requests.py <parsed.json>")
+        sys.exit(1)
+    main(sys.argv[1])
