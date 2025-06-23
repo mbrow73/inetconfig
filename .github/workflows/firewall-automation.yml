@@ -58,7 +58,7 @@ jobs:
             }
           ')
 
-          # Build JSON objects for each rule
+          # Build JSON objects for each rule, trimming whitespace from all fields
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" '
             BEGIN{RS="@@@"}
             NF{
@@ -67,22 +67,22 @@ jobs:
               for(i=1;i<=n;i++){
                 line=lines[i];
                 if(line ~ /New Source/) {
-                  src=line; sub(/.*: /,"",src)
+                  src=line; sub(/.*: /,"",src); gsub(/^[ \t]+|[ \t]+$/,"",src)
                 }
                 if(line ~ /New Destination/) {
-                  dst=line; sub(/.*: /,"",dst)
+                  dst=line; sub(/.*: /,"",dst); gsub(/^[ \t]+|[ \t]+$/,"",dst)
                 }
                 if(line ~ /New Port/) {
-                  ports=line; sub(/.*: /,"",ports)
+                  ports=line; sub(/.*: /,"",ports); gsub(/^[ \t]+|[ \t]+$/,"",ports)
                 }
                 if(line ~ /New Protocol/) {
-                  proto=line; sub(/.*: /,"",proto)
+                  proto=line; sub(/.*: /,"",proto); gsub(/^[ \t]+|[ \t]+$/,"",proto)
                 }
                 if(line ~ /New Direction/) {
-                  dir=line; sub(/.*: /,"",dir)
+                  dir=line; sub(/.*: /,"",dir); gsub(/^[ \t]+|[ \t]+$/,"",dir)
                 }
                 if(line ~ /New Business Justification/) {
-                  just=lines[i+1]
+                  just=lines[i+1]; gsub(/^[ \t]+|[ \t]+$/,"",just)
                 }
               }
               printf("{\"name\": \"AUTO-%s-%s-%s-%s-%d\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}\n",
