@@ -4,13 +4,28 @@ about: "Request an update or removal of existing firewall rule(s)."
 labels: ["firewall-update-request"]
 ---
 
+<!--
+Instructions:
+
+- To **update** a rule: Only fill in the fields you wish to update. Leave others blank.
+- To **remove** a rule: Only "Existing Rule Name" and "Action" (set to `remove`) are required; leave other fields blank.
+- To **update multiple rules**, copy/paste the block below and fill for each rule.
+
+Example:
+#### Rule 1
+🔹 Existing Rule Name: <rule name here>
+🔹 Action: update/remove
+🔹 New Source IP(s) or CIDR(s):
+🔹 New Destination IP(s) or CIDR(s):
+🔹 New Port(s):
+🔹 New Protocol:
+🔹 New Direction:
+🔹 New Business Justification:
+-->
+
+
 ### Request ID (REQID): REQ123123
 ### CARID: 123123
-
-<!-- For each rule you want to update or remove, copy the section below
-
-For remove, only Existing Rule Name and Action are required. For update, fill only the fields you want to change.
- -->
 
 #### Rule 1
 🔹 Existing Rule Name: AUTO-REQ123123-123123-TCP-443-1  
