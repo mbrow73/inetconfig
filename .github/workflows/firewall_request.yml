@@ -91,12 +91,11 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
+          set -uo pipefail
           exit_code=0
           > validation.log
-          tfvars_path="automation.auto.tfvars.json"
           while IFS= read -r rule; do
-            python3 scripts/validate_firewall_request.py "$rule" "$tfvars_path" || exit_code=1
+            python3 scripts/validate_firewall_request.py "$rule" 2>&1 | tee -a validation.log || exit_code=1
           done < <(jq -c '.rules[]' parsed.json)
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
 
@@ -183,7 +182,7 @@ jobs:
 
           fn = f"firewall_requests/{parsed['request_id_reqid']}.json"
           Path(fn).write_text(json.dumps(out, indent=2))
-          print(f"Wrote {fn} with priorities {[r['priority'] for r in out['rules']]}" )
+          print(f"Wrote {fn} with priorities {[r['priority'] for r in out['rules']]}")
           EOF
 
       # 9️⃣ Setup Terraform for fmt & validate
