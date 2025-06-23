@@ -7,7 +7,12 @@ provider "google" {
 
 
 locals {
-  inet_firewall_rules = var.manual_firewall_rules
+  auto_firewall_rules = flatten([
+    for f in fileset("${path.module}/firewall-requests", "*.auto.tfvars.json") :
+      jsondecode(file("${path.module}/firewall-requests/${f}")).auto_firewall_rules
+  ])
+  manual_firewall_rules = jsondecode(file("${path.module}/manual.auto.tfvars.json")).manual_firewall_rules
+  all_firewall_rules = concat(local.auto_firewall_rules, local.manual_firewall_rules)
 }
 
 # Module: CA (Private CA pool and CA)
@@ -61,5 +66,5 @@ module "inet_firewall_policy" {
   inet_vpc                  = "projects/meta-episode-463418-i2/global/networks/default"
   security_profile_group_id = ""
   policy_name               = "inet-policy"
-  inet_firewall_rules       = local.inet_firewall_rules
+  inet_firewall_rules       = local.all_firewall_rules
 }
