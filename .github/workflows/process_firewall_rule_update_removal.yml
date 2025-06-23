@@ -18,7 +18,7 @@ jobs:
       - name: "⬇️ Checkout repo"
         uses: actions/checkout@v3
 
-      - name: "💾 Save structured inputs to file"
+      - name: "💾 Save form inputs to file"
         run: |
           echo "${{ toJson(github.event.inputs) }}" > inputs.json
 
@@ -43,7 +43,8 @@ jobs:
           branch: rule-update-${{ fromJson(steps.update.outputs.result).reqid }}
           title: "[Firewall] Update/Remove via ${{ fromJson(steps.update.outputs.result).reqid }}"
           body: |
-            This PR updates/removes rules for REQID ${{ fromJson(steps.update.outputs.result).reqid }}.
+            This PR updates/removes rules per REQID ${{ fromJson(steps.update.outputs.result).reqid }}.
             Please review and merge.
+          commit-message: "Update/remove firewall rule(s) per REQID ${{ fromJson(steps.update.outputs.result).reqid }}"
           add-paths: updated.auto.tfvars.json
           labels: firewall-rule${{ steps.update.outputs.ownership_changed == 'true' && ',ownership-change' || '' }}
