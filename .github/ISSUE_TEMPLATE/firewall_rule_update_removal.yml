@@ -1,23 +1,15 @@
 name: "Firewall Rule Update/Removal Request"
-description: "Update or remove GCP firewall rules—one block per rule."
+description: "Update or remove existing firewall rules via structured JSON input."
 labels:
   - "firewall-update-request"
 
 body:
-
-  # 👉 Overall Request Info
-  - type: markdown
-    attributes:
-      value: |
-        ## Request Details
-        Fill in your Request ID (format `REQ12345`) and your Team/CARID.
-
   - type: input
     id: reqid
     attributes:
       label: "Request ID (REQID)"
       placeholder: "REQ12345"
-      description: "e.g. REQ12345"
+      description: "Your request identifier (REQ followed by digits)"
     validations:
       required: true
 
@@ -26,79 +18,22 @@ body:
     attributes:
       label: "CARID"
       placeholder: "APP1"
-      description: "Your team or application identifier"
+      description: "Your team or application ID"
     validations:
       required: true
 
-  # 👉 Rule Blocks
-  - type: markdown
+  - type: textarea
+    id: rules_json
     attributes:
-      value: |
-        ---
-        ## Rules
-        For each rule you want to change, click **Add another rule**.
-
-  - type: repeater
-    id: rules
-    attributes:
-      addButtonText: "➕ Add a rule"
-      summary: "**Rule #${{ index + 1 }}**: ${{ fields.existing_rule_name }}"
-    items:
-
-      - type: dropdown
-        id: action
-        attributes:
-          label: "Action"
-          description: "Are we updating or removing this rule?"
-          options:
-            - label: "Update existing rule"
-              value: update
-            - label: "Remove existing rule"
-              value: remove
-        validations:
-          required: true
-
-      - type: input
-        id: existing_rule_name
-        attributes:
-          label: "Existing Rule Name"
-          placeholder: "AUTO-APP1-REQ12345-1-TCP-443"
-          required: true
-
-      - type: input
-        id: new_source_ips
-        attributes:
-          label: "New Source IP(s) or CIDR(s)"
-          placeholder: "203.0.113.55/32"
-          description: "Leave blank if removing"
-      - type: input
-        id: new_destination_ips
-        attributes:
-          label: "New Destination IP(s) or CIDR(s)"
-          placeholder: "10.1.2.22/32"
-          description: "Leave blank if removing"
-      - type: input
-        id: new_ports
-        attributes:
-          label: "New Port(s)"
-          placeholder: "443"
-          description: "Leave blank if removing"
-      - type: input
-        id: new_protocol
-        attributes:
-          label: "New Protocol"
-          placeholder: "tcp"
-          description: "tcp, udp, or icmp; leave blank if removing"
-      - type: input
-        id: new_direction
-        attributes:
-          label: "New Direction"
-          placeholder: "INGRESS"
-          description: "INGRESS or EGRESS; leave blank if removing"
-      - type: textarea
-        id: new_justification
-        attributes:
-          label: "Business Justification"
-          description: "Why is this change needed?"
-        validations:
-          required: true
+      label: "Rules JSON"
+      description: |
+        Paste a JSON array of rule objects. Each object must include:
+        - **action**: `"update"` or `"remove"`
+        - **existing_rule_name**: string, e.g. `"AUTO-APP1-REQ12345-1-TCP-443"`
+        - If `action=="update"`, also:
+          - **new_source_ips**, **new_destination_ips**, **new_ports**,  
+            **new_protocol**, **new_direction**, **new_justification**
+    validations:
+      required: true
+      pattern: "^\\[.*\\]$"
+      pattern_error: "Must be a JSON array (e.g. `[ {...}, {...} ]`)."
