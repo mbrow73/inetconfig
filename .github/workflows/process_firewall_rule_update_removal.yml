@@ -20,7 +20,6 @@ jobs:
 
       - name: "💾 Save issue body to file"
         run: |
-          # Use printf so bullets don’t execute
           printf '%s\n' "${{ github.event.issue.body }}" > issue_body.md
 
       - name: "🟡 Debug: Print raw issue body"

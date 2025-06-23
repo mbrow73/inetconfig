@@ -8,7 +8,7 @@ labels: ["firewall-update-request"]
 
 ### CARID: xxxxxxxxx
 
-<!-- For each rule you want to update or remove, copy the section below -->
+<!-- Copy one “#### Rule” block per rule you want to change -->
 
 #### Rule 1
 🔹 Existing Rule Name: `AUTO-APP1-REQ12345-1-TCP-443`  
@@ -24,4 +24,4 @@ labels: ["firewall-update-request"]
 🔹 Existing Rule Name: `AUTO-APP2-REQ99999-1-TCP-80`  
 🔹 Action: `remove`
 
-<!-- Repeat as needed -->
+<!-- Repeat “#### Rule N” as needed -->

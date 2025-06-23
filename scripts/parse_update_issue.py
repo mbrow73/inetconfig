@@ -5,29 +5,27 @@ if len(sys.argv) < 2:
     print("Usage: parse_update_issue.py <issue_body_file>")
     sys.exit(1)
 
-text = open(sys.argv[1], encoding='utf-8').read().splitlines()
+lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
 
 reqid = ""
 carid = ""
 rules = []
 current = None
 
-for line in text:
-    # Top‐level fields
+for line in lines:
+    # Top-level fields
     if line.startswith("### Request ID"):
-        parts = line.split(":", 1)
-        reqid = parts[1].strip() if len(parts) > 1 else ""
+        reqid = line.split(":",1)[1].strip()
     elif line.startswith("### CARID"):
-        parts = line.split(":", 1)
-        carid = parts[1].strip() if len(parts) > 1 else ""
+        carid = line.split(":",1)[1].strip()
 
-    # New rule start
+    # Start a new rule block
     elif line.startswith("#### Rule"):
         if current:
             rules.append(current)
         current = {
             "existing_rule_name": "",
-            "action": "update",
+            "action": "",
             "new_source_ips": "",
             "new_destination_ips": "",
             "new_ports": "",
@@ -36,14 +34,17 @@ for line in text:
             "new_justification": ""
         }
 
-    # Inside a rule block
+    # Inside a rule block, parse bullets
     elif current is not None and line.strip().startswith("🔹"):
-        # strip bullet and split on first colon
-        content = line.strip()[2:].strip()
-        key_val = content.split(":", 1)
-        if len(key_val) < 2:
+        # Remove bullet and any leading space
+        content = line.strip()[1:].strip()
+        # Split once at colon
+        if ":" not in content:
             continue
-        key, val = key_val[0].strip(), key_val[1].strip().strip("`")
+        key, val = content.split(":",1)
+        key = key.strip()
+        val = val.strip().strip("`")
+        # Map to our JSON fields
         mapping = {
             "Existing Rule Name": "existing_rule_name",
             "Action": "action",
@@ -55,12 +56,15 @@ for line in text:
             "New Business Justification": "new_justification"
         }
         field = mapping.get(key)
-        if field:
+        if field is not None:
             current[field] = val
 
-# append last block
+# Append last rule
 if current:
     rules.append(current)
 
-output = {"reqid": reqid, "carid": carid, "rules": rules}
-print(json.dumps(output, indent=2))
+print(json.dumps({
+    "reqid": reqid,
+    "carid": carid,
+    "rules": rules
+}, indent=2))
