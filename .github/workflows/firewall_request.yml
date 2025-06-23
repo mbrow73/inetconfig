@@ -34,7 +34,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
-            const body = context.payload.issue.body;
+            const body = context.payload.issue.body || "";
             if (!body) throw new Error("No issue body found");
 
             // Extract Request ID
@@ -52,15 +52,17 @@ jobs:
             const rules = [];
             let current = null;
             for (const raw of lines) {
-              // Start new rule on lines like 'Rule 1' or '#### Rule 2'
-              if (/^\s*(?:#+\s*)?Rule\s*\d+/i.test(raw)) {
+              const l = raw.trim();
+              // Detect headings like 'Rule 1' or '#### Rule 2'
+              if (/^(?:#+\s*)?Rule\s*\d+/i.test(l)) {
                 if (current) rules.push(current);
                 current = { request_id_reqid };
                 continue;
               }
               if (!current) continue;
 
-              const m = raw.trim().match(/^🔹\s*(.+?)\s*:\s*(.+)$/);
+              // Match '🔹 Key: Value'
+              const m = l.match(/^🔹\s*(.+?)\s*:\s*(.+)$/);
               if (m) {
                 const key = m[1]
                   .toLowerCase()
@@ -71,7 +73,7 @@ jobs:
               }
             }
             if (current) rules.push(current);
-            if (rules.length === 0) throw new Error("No rules found in issue body");
+            if (!rules.length) throw new Error("No rules found in issue body");
 
             return JSON.stringify({ carid, request_id_reqid, rules });
 
@@ -132,7 +134,7 @@ jobs:
         if: steps.validate.outputs.exit_code != '0'
         run: echo "Skipping inject & PR steps."
 
-      # 7️⃣ Build the PR body
+      # 7️⃣ Build PR body
       - name: ✨ Build PR body
         if: steps.validate.outputs.exit_code == '0'
         id: build_pr_body
