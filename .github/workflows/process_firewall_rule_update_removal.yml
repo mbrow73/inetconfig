@@ -1,4 +1,4 @@
-name: 🔄 Process Firewall Rule Update/Removal
+name: "🔄 Process Firewall Rule Update/Removal"
 
 on:
   issues:
@@ -20,7 +20,8 @@ jobs:
 
       - name: "💾 Save issue body to file"
         run: |
-          echo "${{ github.event.issue.body }}" > issue_body.md
+          # Use printf so we don’t accidentally execute bullets as commands
+          printf '%s\n' "${{ github.event.issue.body }}" > issue_body.md
 
       - name: "🟡 Debug: Print raw issue body"
         run: |
@@ -66,8 +67,7 @@ jobs:
             This PR updates or removes rules per REQID ${{ fromJson(steps.update.outputs.result).reqid }}.
             Please review and merge.
           commit-message: "Update/remove firewall rule(s) per REQID ${{ fromJson(steps.update.outputs.result).reqid }}"
-          add-paths: |
-            updated.auto.tfvars.json
+          add-paths: updated.auto.tfvars.json
           labels: ${{ steps.update.outputs.ownership_changed == 'true' && 'firewall-rule,ownership-change' || 'firewall-rule' }}
 
       - name: "🗑️ Cleanup Terraform runtime files"
