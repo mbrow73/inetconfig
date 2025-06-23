@@ -1,0 +1,39 @@
+name: "🐛 Debug Firewall Form Inputs"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  # we only need to read the issue inputs
+  issues: read
+
+jobs:
+  debug-inputs:
+    runs-on: ubuntu-latest
+    if: >
+      contains(github.event.issue.labels.*.name,
+               'firewall-update-request') ||
+      contains(github.event.issue.labels.*.name,
+               'firewall-remove-request')
+
+    steps:
+      - name: "📦 Checkout repo (not strictly needed)"
+        uses: actions/checkout@v3
+
+      - name: "💾 Save form inputs to file"
+        run: |
+          echo "${{ toJson(github.event.inputs) }}" > inputs.json
+
+      - name: "🖨️ Dump inputs.json"
+        run: |
+          echo "---- START inputs.json ----"
+          cat inputs.json || echo "(inputs.json missing)"
+          echo "----  END inputs.json  ----"
+
+      - name: "❗️ Also dump raw issue payload for inputs"
+        run: |
+          # This will show if inputs are entirely absent
+          echo "---- START github.event ----"
+          echo "${{ toJson(github.event) }}" | jq '.inputs'
+          echo "----  END github.event  ----"
