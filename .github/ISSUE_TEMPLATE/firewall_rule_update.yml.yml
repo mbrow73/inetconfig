@@ -1,7 +1,7 @@
 name: "Firewall Rule Update Request"
 description: "Update one existing firewall rule. For multiple updates, open this form multiple times."
 labels:
-  - "firewall-change-request"
+  - "firewall-update-request"
 
 body:
   - type: input
@@ -9,7 +9,7 @@ body:
     attributes:
       label: "Request ID (REQID)"
       placeholder: "REQ12345"
-      description: "Your request identifier (REQ followed by digits)"
+      description: "REQ followed by digits"
     validations:
       required: true
 
@@ -18,7 +18,7 @@ body:
     attributes:
       label: "CARID"
       placeholder: "APP1"
-      description: "Your team or application identifier"
+      description: "Your team/application ID"
     validations:
       required: true
 
@@ -27,23 +27,23 @@ body:
     attributes:
       label: "Existing Rule Name"
       placeholder: "AUTO-APP1-REQ12345-1-TCP-443"
-      description: "The exact name of the rule to update"
+      description: "Exact name of the rule to update"
     validations:
       required: true
 
   - type: input
     id: new_source_ips
     attributes:
-      label: "New Source IP(s) or CIDR(s)"
+      label: "New Source IP(s)/CIDR(s)"
       placeholder: "203.0.113.55/32"
-      description: "e.g. single IP or CIDR; comma-separated for lists"
+      description: "Comma-separated if multiple"
     validations:
       required: true
 
   - type: input
     id: new_destination_ips
     attributes:
-      label: "New Destination IP(s) or CIDR(s)"
+      label: "New Destination IP(s)/CIDR(s)"
       placeholder: "10.1.2.22/32"
     validations:
       required: true
@@ -53,30 +53,23 @@ body:
     attributes:
       label: "New Port(s)"
       placeholder: "443"
-      description: "Single port (443), list (80,443), or range (1000-2000)"
+      description: "Single, list (80,443), or range (1000-2000)"
     validations:
       required: true
 
   - type: dropdown
     id: new_protocol
     attributes:
-      label: "New Protocol"
-      options:
-        - tcp
-        - udp
-        - icmp
-      description: "Select protocol"
+      label: "Protocol"
+      options: [tcp, udp, icmp]
     validations:
       required: true
 
   - type: dropdown
     id: new_direction
     attributes:
-      label: "New Direction"
-      options:
-        - INGRESS
-        - EGRESS
-      description: "Traffic direction"
+      label: "Direction"
+      options: [INGRESS, EGRESS]
     validations:
       required: true
 
