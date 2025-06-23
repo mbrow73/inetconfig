@@ -8,19 +8,27 @@ jobs:
   add-label:
     runs-on: ubuntu-latest
     steps:
-      - name: Add firewall-update-request label if needed
+      - name: Print issue body for debug
+        run: |
+          echo "---- ISSUE BODY START ----"
+          echo "${{ github.event.issue.body }}"
+          echo "---- ISSUE BODY END ----"
+
+      - name: Add firewall-update-request label for template
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const body = context.payload.issue.body || "";
-            // Use a unique phrase from your update/removal template.
-            // E.g. 'Firewall Rule Update/Removal Request' is usually the 'about:' field or first heading.
-            if (body.includes('Request an update or removal of an existing firewall rule')) {
+            // Match on the unique heading of your template:
+            if (body.includes('Firewall Rule Update/Removal Request') && !context.payload.issue.labels.find(l => l.name === 'firewall-update-request')) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
                 labels: ['firewall-update-request']
               });
+              console.log("✅ Label applied: firewall-update-request");
+            } else {
+              console.log("❌ No match or already labeled. Label not applied.");
             }
