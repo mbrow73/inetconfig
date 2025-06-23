@@ -22,9 +22,25 @@ jobs:
         run: |
           echo "${{ github.event.issue.body }}" > issue_body.md
 
+      - name: 🟡 Debug: Print raw issue body
+        run: |
+          echo "---------------------------"
+          echo "RAW ISSUE BODY START"
+          cat issue_body.md
+          echo "RAW ISSUE BODY END"
+          echo "---------------------------"
+
       - name: 📝 Parse Issue (to JSON)
         run: |
           python3 scripts/parse_update_issue.py issue_body.md > parsed_update.json
+
+      - name: 🟡 Debug: Print parsed update JSON
+        run: |
+          echo "---------------------------"
+          echo "PARSED UPDATE JSON START"
+          cat parsed_update.json
+          echo "PARSED UPDATE JSON END"
+          echo "---------------------------"
 
       - name: 🔎 Update/Remove Rule in tfvars (with validation)
         id: update
