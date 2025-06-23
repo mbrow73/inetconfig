@@ -203,13 +203,22 @@ jobs:
           terraform fmt -recursive
           terraform validate
 
-      # 1️⃣1️⃣ Create PR for NetSec review
+      # 1️⃣1️⃣ Cleanup Terraform runtime files from commit
+      - name: 🧹 Remove Terraform runtime files from git
+        if: steps.validate.outputs.exit_code == '0'
+        run: |
+          git rm -rf .terraform || true
+          git rm -f .terraform.lock.hcl || true
+
+      # 1️⃣2️⃣ Create PR for NetSec review
       - name: 🔀 Create PR for NetSec review
         id: create_pr
         if: steps.validate.outputs.exit_code == '0'
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            firewall_requests/**
           branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id_reqid }}
           title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).rules[0].protocol }}/${{ fromJson(steps.parse.outputs.result).rules[0].port_s }}"
           labels: firewall-rule,pending-review
