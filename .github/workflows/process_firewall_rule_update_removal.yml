@@ -2,7 +2,7 @@ name: "🔄 Process Firewall Rule Update/Removal"
 
 on:
   issues:
-    types: [opened, edited, reopened, labeled]
+    types: [opened]
 
 permissions:
   contents: write
@@ -18,31 +18,15 @@ jobs:
       - name: "⬇️ Checkout repo"
         uses: actions/checkout@v3
 
-      - name: "💾 Save issue body to file"
+      - name: "💾 Save structured inputs to file"
         run: |
-          printf '%s\n' "${{ github.event.issue.body }}" > issue_body.md
-
-      - name: "🟡 Debug: Print raw issue body"
-        run: |
-          echo "---- RAW ISSUE BODY START ----"
-          cat issue_body.md
-          echo "---- RAW ISSUE BODY END ----"
-
-      - name: "📝 Parse Issue (to JSON)"
-        run: |
-          python3 scripts/parse_update_issue.py issue_body.md > parsed_update.json
-
-      - name: "🟡 Debug: Print parsed update JSON"
-        run: |
-          echo "---- PARSED UPDATE JSON START ----"
-          cat parsed_update.json
-          echo "---- PARSED UPDATE JSON END ----"
+          echo "${{ toJson(github.event.inputs) }}" > inputs.json
 
       - name: "🔎 Update/Remove Rule in tfvars (with validation)"
         id: update
         run: |
           python3 scripts/update_remove_firewall_rule.py \
-            parsed_update.json \
+            inputs.json \
             automation.auto.tfvars.json \
             updated.auto.tfvars.json
 
@@ -52,18 +36,14 @@ jobs:
           terraform fmt -recursive
           terraform validate
 
-      - name: "🔀 Create PR for Review (label if ownership changes)"
+      - name: "🔀 Create PR for Review"
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: rule-update-${{ fromJson(steps.update.outputs.result).reqid }}
-          title: "[Firewall] Rule Update/Remove via ${{ fromJson(steps.update.outputs.result).reqid }}"
+          title: "[Firewall] Update/Remove via ${{ fromJson(steps.update.outputs.result).reqid }}"
           body: |
-            This PR updates or removes rules per REQID ${{ fromJson(steps.update.outputs.result).reqid }}.
+            This PR updates/removes rules for REQID ${{ fromJson(steps.update.outputs.result).reqid }}.
             Please review and merge.
-          commit-message: "Update/remove firewall rule(s) per REQID ${{ fromJson(steps.update.outputs.result).reqid }}"
           add-paths: updated.auto.tfvars.json
-          labels: ${{ steps.update.outputs.ownership_changed == 'true' && 'firewall-rule,ownership-change' || 'firewall-rule' }}
-
-      - name: "🗑️ Cleanup Terraform runtime files"
-        run: rm -rf .terraform .terraform.lock.hcl
+          labels: firewall-rule${{ steps.update.outputs.ownership_changed == 'true' && ',ownership-change' || '' }}
