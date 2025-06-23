@@ -36,53 +36,56 @@ jobs:
           script: |
             const body = context.payload.issue.body;
             if (!body) throw new Error("No issue body found");
+
             // Extract Request ID
-            const reqMatch = body.match(/REQ\d+/i);
+            const reqMatch = body.match(/REQ\d+/);
             if (!reqMatch) throw new Error("Missing Request ID (REQID)");
             const request_id_reqid = reqMatch[0].trim();
+
             // Extract CARID
             const carMatch = body.match(/CARID\s*[:\-]\s*(\S+)/i);
             if (!carMatch) throw new Error("Missing CARID");
             const carid = carMatch[1].trim();
 
-            // Extract rules
+            // Parse rules
             const lines = body.split(/\r?\n/);
             const rules = [];
             let current = null;
             for (const raw of lines) {
-              const l = raw.trim();
-              if (/^Rule\s*\d+/i.test(l)) {
+              // Start new rule on lines like 'Rule 1' or '#### Rule 2'
+              if (/^\s*(?:#+\s*)?Rule\s*\d+/i.test(raw)) {
                 if (current) rules.push(current);
                 current = { request_id_reqid };
                 continue;
               }
               if (!current) continue;
-              const bullet = l.match(/^🔹\s*(.+?)\s*:\s*(.+)$/);
-              if (bullet) {
-                const rawKey = bullet[1];
-                const val = bullet[2].trim().replace(/^`|`$/g, "");
-                const key = rawKey
+
+              const m = raw.trim().match(/^🔹\s*(.+?)\s*:\s*(.+)$/);
+              if (m) {
+                const key = m[1]
                   .toLowerCase()
                   .replace(/[^a-z0-9]+/g, "_")
-                  .replace(/_+$/,"");
+                  .replace(/_+$/, "");
+                const val = m[2].trim().replace(/^`|`$/g, "");
                 current[key] = val;
               }
             }
             if (current) rules.push(current);
-            if (rules.length === 0) throw new Error("No rules found");
+            if (rules.length === 0) throw new Error("No rules found in issue body");
+
             return JSON.stringify({ carid, request_id_reqid, rules });
 
       # 3️⃣ Persist parsed payload
       - name: 💾 Save parsed JSON
         run: echo '${{ steps.parse.outputs.result }}' > parsed.json
 
-      # 4️⃣ Merge latest main (so we see all prior priorities)
+      # 4️⃣ Merge latest main so we see all existing priorities
       - name: 🔄 Merge latest main
         run: |
           git fetch origin main
           git merge origin/main --strategy-option theirs
 
-      # 5️⃣ Validate rules
+      # 5️⃣ Run validation
       - name: ✅ Run validation
         id: validate
         continue-on-error: true
@@ -125,11 +128,11 @@ jobs:
               state: 'closed'
             });
 
-      - name: ⏭️ Skip remaining steps on validation failure
+      - name: ⏭️ Skip on validation failure
         if: steps.validate.outputs.exit_code != '0'
         run: echo "Skipping inject & PR steps."
 
-      # 7️⃣ Build PR body
+      # 7️⃣ Build the PR body
       - name: ✨ Build PR body
         if: steps.validate.outputs.exit_code == '0'
         id: build_pr_body
@@ -156,14 +159,12 @@ jobs:
           parsed = json.load(open("parsed.json"))
 
           prios = set()
-          # existing manual rules
           try:
               man = json.load(open("manual.auto.tfvars.json"))
               for r in man.get("manual_firewall_rules", []):
                   prios.add(r.get("priority", 0))
           except FileNotFoundError:
               pass
-          # existing auto requests
           for fn in glob.glob("firewall_requests/*.json"):
               try:
                   data = json.load(open(fn))
@@ -174,7 +175,7 @@ jobs:
 
           start = max(prios) if prios else 1000
 
-          out = { "carid": parsed["carid"], "request_id_reqid": parsed["request_id_reqid"], "rules": [] }
+          out = {"carid": parsed["carid"], "request_id_reqid": parsed["request_id_reqid"], "rules": []}
           for rule in parsed["rules"]:
               start += 1
               rule["priority"] = start
@@ -182,10 +183,10 @@ jobs:
 
           fn = f"firewall_requests/{parsed['request_id_reqid']}.json"
           Path(fn).write_text(json.dumps(out, indent=2))
-          print(f"Wrote {fn}, priorities: {[r['priority'] for r in out['rules']]}" )
+          print(f"Wrote {fn} with priorities {[r['priority'] for r in out['rules']]}" )
           EOF
 
-      # 9️⃣ Terraform fmt & validate (optional)
+      # 9️⃣ Optional: Terraform fmt & validate
       - name: 🧹 Terraform fmt & validate
         if: steps.validate.outputs.exit_code == '0'
         env:
