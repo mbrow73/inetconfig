@@ -5,10 +5,35 @@ provider "google" {
   credentials = var.credentials
 }
 
+#### 1) Slurp in every JSON request file ####
+data "local_file" "requests" {
+  for_each = fileset(path.module, "firewall_requests/*.json")
+  filename = "${path.module}/${each.value}"
+}
+
+#### 2) Decode + flatten into the shape your module needs ####
 locals {
+  auto_firewall_rules = flatten([
+    for req_file in data.local_file.requests : [
+      for idx, r in jsondecode(req_file.content).rules : {
+        name                   = "AUTO-${upper(jsondecode(req_file.content).carid)}-${r.request_id_reqid}-${idx+1}-${upper(r.protocol)}-${replace(r.port_s, ",", "-")}"
+        description            = r.business_justification
+        priority               = 1000 + idx
+        direction              = upper(r.direction)
+        action                 = "allow"
+        enable_logging         = true
+        src_ip_ranges          = split(",", r.source_ip_s_or_cidr_s)
+        dest_ip_ranges         = split(",", r.destination_ip_s_or_cidr_s)
+        protocol               = upper(r.protocol)
+        ports                  = split(",", r.port_s)
+        tls_inspect            = false
+      }
+    ]
+  ])
+
   inet_firewall_rules = concat(
-    var.auto_firewall_rules,
-    var.manual_firewall_rules,
+    local.auto_firewall_rules,
+    var.manual_firewall_rules
   )
 }
 
