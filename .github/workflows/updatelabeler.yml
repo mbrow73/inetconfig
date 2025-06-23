@@ -1,0 +1,25 @@
+name: 🔖 Label Firewall Rule Update/Removal Requests
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add firewall-update-request label if needed
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = context.payload.issue.body || "";
+            // Check for a unique phrase from your template to distinguish these issues.
+            if (body.includes('Firewall Rule Update/Removal Request')) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['firewall-update-request']
+              });
+            }
