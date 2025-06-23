@@ -53,7 +53,6 @@ jobs:
             let current = null;
             for (const raw of lines) {
               const l = raw.trim();
-              // Detect headings like 'Rule 1' or '#### Rule 2'
               if (/^(?:#+\s*)?Rule\s*\d+/i.test(l)) {
                 if (current) rules.push(current);
                 current = { request_id_reqid };
@@ -61,7 +60,6 @@ jobs:
               }
               if (!current) continue;
 
-              // Match '🔹 Key: Value'
               const m = l.match(/^🔹\s*(.+?)\s*:\s*(.+)$/);
               if (m) {
                 const key = m[1]
@@ -81,7 +79,7 @@ jobs:
       - name: 💾 Save parsed JSON
         run: echo '${{ steps.parse.outputs.result }}' > parsed.json
 
-      # 4️⃣ Merge latest main so we see all existing priorities
+      # 4️⃣ Merge latest main to see existing priorities
       - name: 🔄 Merge latest main
         run: |
           git fetch origin main
@@ -188,7 +186,14 @@ jobs:
           print(f"Wrote {fn} with priorities {[r['priority'] for r in out['rules']]}" )
           EOF
 
-      # 9️⃣ Optional: Terraform fmt & validate
+      # 9️⃣ Setup Terraform for fmt & validate
+      - name: ⚙️ Setup Terraform
+        if: steps.validate.outputs.exit_code == '0'
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.0'
+
+      # 🔟 Terraform fmt & validate
       - name: 🧹 Terraform fmt & validate
         if: steps.validate.outputs.exit_code == '0'
         env:
@@ -198,7 +203,7 @@ jobs:
           terraform fmt -recursive
           terraform validate
 
-      # 🔟 Create PR for NetSec review
+      # 1️⃣1️⃣ Create PR for NetSec review
       - name: 🔀 Create PR for NetSec review
         id: create_pr
         if: steps.validate.outputs.exit_code == '0'
