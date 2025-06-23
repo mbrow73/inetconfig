@@ -1,0 +1,140 @@
+name: 🔄 Process Firewall Rule Update/Removal Requests
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  process:
+    if: contains(github.event.issue.labels.*.name, 'firewall-update-request')
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 📝 Parse Issue for Update/Remove, Modify JSON
+        id: parse_and_update
+        shell: bash
+        run: |
+          set -e
+
+          ISSUE_BODY="${{ github.event.issue.body }}"
+          REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
+          CARID=$(echo "$ISSUE_BODY" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
+          if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
+          if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
+
+          JSON_PATH="firewall-requests/${REQID}.auto.tfvars.json"
+          if [ ! -f "$JSON_PATH" ]; then echo "No rule file found for REQID=$REQID"; exit 1; fi
+
+          # Parse rule blocks
+          RULES=$(echo "$ISSUE_BODY" | awk '
+            BEGIN{rule=0}
+            /^#### Rule/{
+              if(rule){
+                print rule_block "\n@@@"
+              }
+              rule_block = ""
+              rule=1
+              next
+            }
+            {
+              if(rule){
+                rule_block = rule_block $0 "\n"
+              }
+            }
+            END{
+              if(rule){
+                print rule_block
+              }
+            }
+          ')
+
+          cp "$JSON_PATH" "${JSON_PATH}.bak"
+          jq '.auto_firewall_rules' "$JSON_PATH" > rules_in_file.json
+
+          cat > update_script.awk <<'EOS'
+          BEGIN{FS=": ";OFS=": "}
+          function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
+          {
+            if ($1 ~ /Existing Rule Name/) rulename=trim($2)
+            else if ($1 ~ /Action/) action=trim($2)
+            else if ($1 ~ /New Source/) src=trim($2)
+            else if ($1 ~ /New Destination/) dst=trim($2)
+            else if ($1 ~ /New Port/) ports=trim($2)
+            else if ($1 ~ /New Protocol/) proto=trim($2)
+            else if ($1 ~ /New Direction/) dir=trim($2)
+            else if ($1 ~ /New Business Justification/) just=trim($2)
+            else if ($1 ~ /#### Rule/) {
+              if(rulename && action) {
+                print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
+              }
+              rulename=action=src=dst=ports=proto=dir=just=""
+            }
+          }
+          END{
+            if(rulename && action) print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
+          }
+          EOS
+
+          echo "$RULES" | awk -f update_script.awk > update_instructions.txt
+
+          # Now process updates/removes
+          NEW_RULES=$(jq -c '.[]' rules_in_file.json)
+          while IFS= read -r inst; do
+            IFS='|' read -r rulename action src dst ports proto dir just <<< "$inst"
+            rulename=$(echo "$rulename" | xargs)
+            action=$(echo "$action" | xargs)
+            if [ "$action" = "remove" ]; then
+              NEW_RULES=$(echo "$NEW_RULES" | jq -cs "map(select(.name != \"$rulename\"))")
+            elif [ "$action" = "update" ]; then
+              NEW_RULES=$(echo "$NEW_RULES" | jq -cs "map(if .name == \"$rulename\" then . + {src_ip_ranges: [\"$src\"], dest_ip_ranges: [\"$dst\"], ports: [\"$ports\"], protocol: \"$proto\", direction: \"$dir\", description: \"$just\"} else . end)")
+            fi
+          done < update_instructions.txt
+
+          TFVARS="{\"auto_firewall_rules\": $(echo "$NEW_RULES" | jq '.') }"
+          echo "$TFVARS" | jq '.' > "$JSON_PATH"
+
+      - name: ⏫ Create or Update Pull Request for NetSec
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: |
+            [Firewall Automation] Update/remove rules for ${{ env.REQID }}
+          branch: firewall/${{ env.REQID }}-update-${{ github.event.issue.number }}
+          title: "Firewall update/removal: ${{ env.REQID }} (Issue #${{ github.event.issue.number }})"
+          body: |
+            Automated firewall rule update/removal for REQID `${{ env.REQID }}`.
+
+            **Summary:**
+            - Source: ${{ github.event.issue.user.login }}
+            - Related Issue: #${{ github.event.issue.number }}
+
+            **Rules:**  
+            _See the file `firewall-requests/${{ env.REQID }}.auto.tfvars.json` for full details._
+
+            > **NetSec:** Please review and merge if approved.  
+          add-paths: |
+            firewall-requests/${{ env.REQID }}.auto.tfvars.json
+          base: main
+
+      - name: 💬 Comment PR Link to Issue
+        if: steps.cpr.outputs.pull-request-url != ''
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
+            })
