@@ -10,7 +10,7 @@ on:
 
 permissions:
   contents: write
-  issues: write
+  issues:   write
   pull-requests: write
 
 jobs:
@@ -19,14 +19,14 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
-      # 1️⃣ Check out the repository
+      # 1️⃣ Check out the repo
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2️⃣ Parse Issue into JSON (CARID, REQID, and rules[])
+      # 2️⃣ Parse the Issue into JSON
       - name: 📝 Parse issue into JSON (and CARID)
         id: parse
         uses: actions/github-script@v6
@@ -36,68 +36,58 @@ jobs:
           script: |
             const body = context.payload.issue.body || "";
             if (!body) throw new Error("No issue body found");
-
-            // Extract Request ID
-            const reqMatch = body.match(/REQ\d+/);
-            if (!reqMatch) throw new Error("Missing Request ID (REQID)");
-            const request_id_reqid = reqMatch[0].trim();
-
-            // Extract CARID
-            const carMatch = body.match(/CARID\s*[:\-]\s*(\S+)/i);
-            if (!carMatch) throw new Error("Missing CARID");
-            const carid = carMatch[1].trim();
-
-            // Parse rules
-            const lines = body.split(/\r?\n/);
-            const rules = [];
-            let current = null;
+            const req = body.match(/REQ\d+/);
+            if (!req) throw new Error("Missing Request ID (REQID)");
+            const request_id_reqid = req[0];
+            const car = body.match(/CARID\s*[:\-]\s*(\S+)/i);
+            if (!car) throw new Error("Missing CARID");
+            const carid = car[1];
+            const lines = body.split(/\r?\n/), rules = [];
+            let cur = null;
             for (const raw of lines) {
               const l = raw.trim();
               if (/^(?:#+\s*)?Rule\s*\d+/i.test(l)) {
-                if (current) rules.push(current);
-                current = { request_id_reqid };
+                if (cur) rules.push(cur);
+                cur = { request_id_reqid };
                 continue;
               }
-              if (!current) continue;
-
+              if (!cur) continue;
               const m = l.match(/^🔹\s*(.+?)\s*:\s*(.+)$/);
               if (m) {
-                const key = m[1]
-                  .toLowerCase()
-                  .replace(/[^a-z0-9]+/g, "_")
-                  .replace(/_+$/, "");
-                const val = m[2].trim().replace(/^`|`$/g, "");
-                current[key] = val;
+                const k = m[1].toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/_+$/,"");
+                const v = m[2].trim().replace(/^`|`$/g,"");
+                cur[k] = v;
               }
             }
-            if (current) rules.push(current);
+            if (cur) rules.push(cur);
             if (!rules.length) throw new Error("No rules found in issue body");
-
             return JSON.stringify({ carid, request_id_reqid, rules });
 
-      # 3️⃣ Persist parsed payload
+      # 3️⃣ Persist parsed JSON
       - name: 💾 Save parsed JSON
         run: echo '${{ steps.parse.outputs.result }}' > parsed.json
 
-      # 4️⃣ Merge latest main to see existing priorities
+      # 4️⃣ Pull in latest main (so we see existing requests)
       - name: 🔄 Merge latest main
         run: |
           git fetch origin main
           git merge origin/main --strategy-option theirs
 
-      # 5️⃣ Run validation
+      # 5️⃣ Consolidated validation
       - name: ✅ Run validation
         id: validate
         continue-on-error: true
         shell: bash
         run: |
           set -uo pipefail
-          exit_code=0
           > validation.log
-          while IFS= read -r rule; do
-            python3 scripts/validate_firewall_request.py "$rule" 2>&1 | tee -a validation.log || exit_code=1
-          done < <(jq -c '.rules[]' parsed.json)
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          # validate_firewall_requests.py reads parsed.json + all existing rules
+          python3 scripts/validate_firewall_requests.py parsed.json 2>&1 | tee validation.log || true
+          if grep -q '^❌' validation.log; then
+            echo "exit_code=1" >> $GITHUB_OUTPUT
+          else
+            echo "exit_code=0" >> $GITHUB_OUTPUT
+          fi
 
       # 6️⃣ Comment & close on validation failure
       - name: 💬 Comment on validation failure
@@ -127,7 +117,7 @@ jobs:
               state: 'closed'
             });
 
-      - name: ⏭️ Skip on validation failure
+      - name: ⏭️ Skip remaining steps on validation failure
         if: steps.validate.outputs.exit_code != '0'
         run: echo "Skipping inject & PR steps."
 
@@ -160,29 +150,24 @@ jobs:
           prios = set()
           try:
               man = json.load(open("manual.auto.tfvars.json"))
-              for r in man.get("manual_firewall_rules", []):
-                  prios.add(r.get("priority", 0))
+              prios |= {r.get("priority",0) for r in man.get("manual_firewall_rules", [])}
           except FileNotFoundError:
               pass
           for fn in glob.glob("firewall_requests/*.json"):
-              try:
-                  data = json.load(open(fn))
-                  for r in data.get("rules", []):
-                      prios.add(r.get("priority", 0))
-              except:
-                  continue
+              data = json.load(open(fn))
+              prios |= {r.get("priority",0) for r in data.get("rules", [])}
 
-          start = max(prios) if prios else 1000
-
+          next_prio = max(prios) + 1 if prios else 1001
           out = {"carid": parsed["carid"], "request_id_reqid": parsed["request_id_reqid"], "rules": []}
           for rule in parsed["rules"]:
-              start += 1
-              rule["priority"] = start
+              rule["priority"] = next_prio
+              next_prio += 1
               out["rules"].append(rule)
 
           fn = f"firewall_requests/{parsed['request_id_reqid']}.json"
           Path(fn).write_text(json.dumps(out, indent=2))
           print(f"Wrote {fn} with priorities {[r['priority'] for r in out['rules']]}")
+
           EOF
 
       # 9️⃣ Setup Terraform for fmt & validate
@@ -202,22 +187,19 @@ jobs:
           terraform fmt -recursive
           terraform validate
 
-      # 1️⃣1️⃣ Cleanup Terraform runtime files from commit
-      - name: 🧹 Remove Terraform runtime files from git
+      # 1️⃣1️⃣ Cleanup generated files
+      - name: 🧹 Cleanup generated files
         if: steps.validate.outputs.exit_code == '0'
         run: |
-          git rm -rf .terraform || true
-          git rm -f .terraform.lock.hcl || true
+          git rm -rf .terraform .terraform.lock.hcl || true
+          git rm -f parsed.json validation.log || true
 
       # 1️⃣2️⃣ Create PR for NetSec review
       - name: 🔀 Create PR for NetSec review
-        id: create_pr
         if: steps.validate.outputs.exit_code == '0'
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          add-paths: |
-            firewall_requests/**
           branch: firewall-req-${{ fromJson(steps.parse.outputs.result).request_id_reqid }}
           title: "[Firewall] ${{ fromJson(steps.parse.outputs.result).request_id_reqid }} – ${{ fromJson(steps.parse.outputs.result).rules[0].protocol }}/${{ fromJson(steps.parse.outputs.result).rules[0].port_s }}"
           labels: firewall-rule,pending-review
