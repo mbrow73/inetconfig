@@ -26,17 +26,16 @@ jobs:
         run: |
           set -e
 
-          # Use the actual issue body from the GitHub Action context
           ISSUE_BODY="${{ github.event.issue.body }}"
 
-          # Extract REQID and CARID (from line *after* heading, inside backticks)
-          REQID=$(echo "$ISSUE_BODY" | awk '/Request ID/{getline; gsub(/`/,""); print $0}' | head -1 | xargs)
-          CARID=$(echo "$ISSUE_BODY" | awk '/CARID:/{getline; gsub(/`/,""); print $0}' | head -1 | xargs)
+          # Extract REQID and CARID (value after the colon)
+          REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
+          CARID=$(echo "$ISSUE_BODY" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
           if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
           if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
           echo "REQID=$REQID" >> $GITHUB_OUTPUT
 
-          # Extract each rule block (splitting on #### Rule lines)
+          # Extract rules (one block per #### Rule N section)
           RULES=$(echo "$ISSUE_BODY" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
@@ -59,7 +58,7 @@ jobs:
             }
           ')
 
-          # Build the rules.json: each rule as a JSON object, one per line
+          # Build JSON objects for each rule
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" '
             BEGIN{RS="@@@"}
             NF{
@@ -68,19 +67,19 @@ jobs:
               for(i=1;i<=n;i++){
                 line=lines[i];
                 if(line ~ /New Source/) {
-                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); src=line
+                  src=line; sub(/.*: /,"",src)
                 }
                 if(line ~ /New Destination/) {
-                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); dst=line
+                  dst=line; sub(/.*: /,"",dst)
                 }
                 if(line ~ /New Port/) {
-                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); ports=line
+                  ports=line; sub(/.*: /,"",ports)
                 }
                 if(line ~ /New Protocol/) {
-                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); proto=line
+                  proto=line; sub(/.*: /,"",proto)
                 }
                 if(line ~ /New Direction/) {
-                  gsub(/.*`/,"",line); gsub(/`.*/,"",line); dir=line
+                  dir=line; sub(/.*: /,"",dir)
                 }
                 if(line ~ /New Business Justification/) {
                   just=lines[i+1]
@@ -91,7 +90,6 @@ jobs:
             }
           ' > rules.json
 
-          # Collapse all rule JSON lines into a JSON array
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\": [${RULES_JSON}]}"
           mkdir -p firewall-requests
