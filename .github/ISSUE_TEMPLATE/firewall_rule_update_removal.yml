@@ -1,72 +1,79 @@
-name: Firewall Rule Update/Removal Request
-description: Use this form to update or remove one or more existing firewall rules.
+name: "Firewall Rule Update/Removal Request"
+description: "Use this form to update or remove one or more existing firewall rules."
 labels:
-  - firewall-update-request
+  - "firewall-update-request"
 
 body:
   - type: input
     id: reqid
     attributes:
-      label: Request ID (REQID)
-      description: “REQ#### format”
+      label: "Request ID (REQID)"
+      description: "REQ#### format"
       required: true
 
   - type: input
     id: carid
     attributes:
-      label: CARID
-      description: Your team or application ID
+      label: "CARID"
+      description: "Your team or application ID"
       required: true
 
   - type: repeater
     id: rules
     attributes:
-      label: Rules
-      description: “Add one block per rule you want to update or remove”
-      summary: “Rule #${{ index + 1 }}: ${{ fields.existing_rule_name }}”
-      addButtonText: “Add another rule”
+      label: "Rules"
+      description: "Add one block per rule you want to update or remove"
+      summary: "Rule #${{ index + 1 }}: ${{ fields.existing_rule_name }}"
+      addButtonText: "Add another rule"
     items:
       - type: dropdown
         id: action
         attributes:
-          label: Action
+          label: "Action"
           options:
-            - update
-            - remove
+            - "update"
+            - "remove"
           required: true
+
       - type: input
         id: existing_rule_name
         attributes:
-          label: Existing Rule Name
-          description: e.g. AUTO-APP1-REQ12345-1-TCP-443
+          label: "Existing Rule Name"
+          description: "e.g. AUTO-APP1-REQ12345-1-TCP-443"
           required: true
+
       - type: input
         id: new_source_ips
         attributes:
-          label: New Source IP(s) or CIDR(s)
-          description: leave blank if removing
+          label: "New Source IP(s) or CIDR(s)"
+          description: "leave blank if removing"
+
       - type: input
         id: new_destination_ips
         attributes:
-          label: New Destination IP(s) or CIDR(s)
-          description: leave blank if removing
+          label: "New Destination IP(s) or CIDR(s)"
+          description: "leave blank if removing"
+
       - type: input
         id: new_ports
         attributes:
-          label: New Port(s)
-          description: leave blank if removing
+          label: "New Port(s)"
+          description: "leave blank if removing"
+
       - type: input
         id: new_protocol
         attributes:
-          label: New Protocol
-          description: tcp, udp, or icmp; leave blank if removing
+          label: "New Protocol"
+          description: "tcp, udp, or icmp; leave blank if removing"
+
       - type: input
         id: new_direction
         attributes:
-          label: New Direction
-          description: INGRESS or EGRESS; leave blank if removing
+          label: "New Direction"
+          description: "INGRESS or EGRESS; leave blank if removing"
+
       - type: textarea
         id: new_justification
         attributes:
-          label: New Business Justification
+          label: "New Business Justification"
           required: true
