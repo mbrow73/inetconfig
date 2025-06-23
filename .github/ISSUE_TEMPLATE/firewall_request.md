@@ -8,7 +8,7 @@ labels: ["firewall-request"]
 `REQxxxxxx`
 
 ### CARID: 
-`APP1` (or whatever identifier your process needs)
+`APP1`
 
 <!-- Repeat this block for each rule -->
 #### Rule 1
