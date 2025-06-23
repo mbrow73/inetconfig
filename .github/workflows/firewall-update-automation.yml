@@ -159,7 +159,7 @@ jobs:
 
             > **NetSec:** Please review and merge if approved.  
           add-paths: |
-            firewall-requests/${{ env.REQID }}.auto.tfvars.json
+            firewall-requests/*.auto.tfvars.json
           base: main
 
       - name: 💬 Comment PR Link to Issue
