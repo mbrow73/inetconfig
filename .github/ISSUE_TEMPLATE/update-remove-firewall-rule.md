@@ -1,6 +1,6 @@
 ---
 name: Firewall Rule Update/Removal Request
-about: Request an update or removal of an existing firewall rule.
+about: Request an update or removal of existing firewall rule(s).
 labels: ["firewall-update-request"]
 ---
 
@@ -8,21 +8,20 @@ labels: ["firewall-update-request"]
 
 ### CARID: xxxxxxxxx
 
-### Action Type  
-<!-- `update` or `remove` -->
-Action: `update`
+<!-- For each rule you want to update or remove, copy the section below -->
 
-#### Rule 1 (Update Example)
-🔹 Existing Rule Name: `AUTO-APP1-REQ12345-1-TCP-443`  
-🔹 New Source IP(s) or CIDR(s): `203.0.113.55/32`  
-🔹 New Destination IP(s) or CIDR(s): `10.1.2.22/32`  
-🔹 New Port(s): `443`  
-🔹 New Protocol: `tcp`  
-🔹 New Direction: `INGRESS`  
+#### Rule 1
+🔹 Existing Rule Name: `AUTO-APP1-REQ12345-1-TCP-443`
+🔹 Action: `update` 
+🔹 New Source IP(s) or CIDR(s): `203.0.113.55/32`   <!-- leave blank if removing -->
+🔹 New Destination IP(s) or CIDR(s): `10.1.2.22/32`
+🔹 New Port(s): `443`
+🔹 New Protocol: `tcp`
+🔹 New Direction: `INGRESS`
 🔹 New Business Justification: Need to restrict to a smaller range
 
-#### Rule 2 (Removal Example)
-🔹 Existing Rule Name: `AUTO-APP2-REQ99999-1-TCP-80`  
+#### Rule 2
+🔹 Existing Rule Name: `AUTO-APP2-REQ99999-1-TCP-80`
 🔹 Action: `remove`
 
-<!-- Repeat rule blocks as needed -->
+<!-- Repeat as needed -->
