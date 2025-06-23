@@ -19,14 +19,14 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'firewall-request')
 
     steps:
-      # 1️⃣ Check out repo
+      # 1️⃣ Check out the repository
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2️⃣ Parse the Issue into JSON (carid, request_id_reqid, rules[])
+      # 2️⃣ Parse Issue into JSON (CARID, REQID, and rules[])
       - name: 📝 Parse issue into JSON (and CARID)
         id: parse
         uses: actions/github-script@v6
@@ -34,28 +34,19 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
-            const issue = context.payload.issue;
-            if (!issue?.body) throw new Error("No issue body found");
+            const body = context.payload.issue.body;
+            if (!body) throw new Error("No issue body found");
+            // Extract Request ID
+            const reqMatch = body.match(/REQ\d+/i);
+            if (!reqMatch) throw new Error("Missing Request ID (REQID)");
+            const request_id_reqid = reqMatch[0].trim();
+            // Extract CARID
+            const carMatch = body.match(/CARID\s*[:\-]\s*(\S+)/i);
+            if (!carMatch) throw new Error("Missing CARID");
+            const carid = carMatch[1].trim();
 
-            const lines = issue.body.split(/\r?\n/);
-
-            // 2a) Extract CARID & Request ID
-            let carid = "";
-            let request_id_reqid = "";
-            for (const l of lines) {
-              let m;
-              if (!request_id_reqid && (m = l.match(/^\s*Request\s*ID\s*\(REQID\)\s*:\s*(REQ\d+)/i))) {
-                request_id_reqid = m[1].trim();
-              }
-              if (!carid && (m = l.match(/^\s*CARID\s*:\s*(\S+)/i))) {
-                carid = m[1].trim();
-              }
-              if (carid && request_id_reqid) break;
-            }
-            if (!request_id_reqid) throw new Error("Missing Request ID (REQID)");
-            if (!carid) throw new Error("Missing CARID");
-
-            // 2b) Extract rules
+            // Extract rules
+            const lines = body.split(/\r?\n/);
             const rules = [];
             let current = null;
             for (const raw of lines) {
@@ -68,31 +59,30 @@ jobs:
               if (!current) continue;
               const bullet = l.match(/^🔹\s*(.+?)\s*:\s*(.+)$/);
               if (bullet) {
-                let key = bullet[1]
+                const rawKey = bullet[1];
+                const val = bullet[2].trim().replace(/^`|`$/g, "");
+                const key = rawKey
                   .toLowerCase()
                   .replace(/[^a-z0-9]+/g, "_")
                   .replace(/_+$/,"");
-                const val = bullet[2].trim().replace(/^`|`$/g, "");
                 current[key] = val;
               }
             }
             if (current) rules.push(current);
-
-            if (rules.length === 0) throw new Error("No rules found in issue body");
-
+            if (rules.length === 0) throw new Error("No rules found");
             return JSON.stringify({ carid, request_id_reqid, rules });
 
-      # 3️⃣ Persist parsed JSON
+      # 3️⃣ Persist parsed payload
       - name: 💾 Save parsed JSON
         run: echo '${{ steps.parse.outputs.result }}' > parsed.json
 
-      # 4️⃣ Merge latest main so we see all existing priorities
+      # 4️⃣ Merge latest main (so we see all prior priorities)
       - name: 🔄 Merge latest main
         run: |
           git fetch origin main
           git merge origin/main --strategy-option theirs
 
-      # 5️⃣ Run validation
+      # 5️⃣ Validate rules
       - name: ✅ Run validation
         id: validate
         continue-on-error: true
@@ -103,12 +93,11 @@ jobs:
           > validation.log
           tfvars_path="automation.auto.tfvars.json"
           while IFS= read -r rule; do
-            python3 scripts/validate_firewall_request.py "$rule" "$tfvars_path" \
-              || exit_code=1
+            python3 scripts/validate_firewall_request.py "$rule" "$tfvars_path" || exit_code=1
           done < <(jq -c '.rules[]' parsed.json)
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
 
-      # 6️⃣ On validation failure: comment & close
+      # 6️⃣ Comment & close on validation failure
       - name: 💬 Comment on validation failure
         if: steps.validate.outputs.exit_code != '0'
         uses: actions/github-script@v6
@@ -136,7 +125,7 @@ jobs:
               state: 'closed'
             });
 
-      - name: ⏭️ Skip on validation failure
+      - name: ⏭️ Skip remaining steps on validation failure
         if: steps.validate.outputs.exit_code != '0'
         run: echo "Skipping inject & PR steps."
 
@@ -155,7 +144,7 @@ jobs:
             ).join("\n");
             return `Auto-generated firewall requests **${p.request_id_reqid}**:\n\n${lines}\n\nCloses #${{ github.event.issue.number }}`;
 
-      # 8️⃣ Assign unique priorities & write per-request JSON
+      # 8️⃣ Assign priorities & write per-request JSON
       - name: ✍️ Assign priorities & write per-request JSON
         if: steps.validate.outputs.exit_code == '0'
         run: |
@@ -164,43 +153,39 @@ jobs:
           import json, glob
           from pathlib import Path
 
-          # Load parsed request
           parsed = json.load(open("parsed.json"))
 
-          # Gather existing priorities
           prios = set()
-          # manual rules
+          # existing manual rules
           try:
-            man = json.load(open("manual.auto.tfvars.json"))
-            for r in man.get("manual_firewall_rules", []):
-              prios.add(r.get("priority",0))
+              man = json.load(open("manual.auto.tfvars.json"))
+              for r in man.get("manual_firewall_rules", []):
+                  prios.add(r.get("priority", 0))
           except FileNotFoundError:
-            pass
-          # prior auto requests
+              pass
+          # existing auto requests
           for fn in glob.glob("firewall_requests/*.json"):
-            try:
-              data = json.load(open(fn))
-              for r in data.get("rules", []):
-                prios.add(r.get("priority",0))
-            except:
-              continue
+              try:
+                  data = json.load(open(fn))
+                  for r in data.get("rules", []):
+                      prios.add(r.get("priority", 0))
+              except:
+                  continue
 
           start = max(prios) if prios else 1000
 
-          # Assign & output
-          out = {"carid": parsed["carid"], "request_id_reqid": parsed["request_id_reqid"], "rules": []}
+          out = { "carid": parsed["carid"], "request_id_reqid": parsed["request_id_reqid"], "rules": [] }
           for rule in parsed["rules"]:
-            start += 1
-            rule["priority"] = start
-            out["rules"].append(rule)
+              start += 1
+              rule["priority"] = start
+              out["rules"].append(rule)
 
-          # Write file
           fn = f"firewall_requests/{parsed['request_id_reqid']}.json"
           Path(fn).write_text(json.dumps(out, indent=2))
-          print(f"Wrote {fn} with priorities {[r['priority'] for r in out['rules']]}")
+          print(f"Wrote {fn}, priorities: {[r['priority'] for r in out['rules']]}" )
           EOF
 
-      # 9️⃣ Optional: terraform fmt & validate
+      # 9️⃣ Terraform fmt & validate (optional)
       - name: 🧹 Terraform fmt & validate
         if: steps.validate.outputs.exit_code == '0'
         env:
@@ -210,7 +195,7 @@ jobs:
           terraform fmt -recursive
           terraform validate
 
-      # 🔟 Create PR
+      # 🔟 Create PR for NetSec review
       - name: 🔀 Create PR for NetSec review
         id: create_pr
         if: steps.validate.outputs.exit_code == '0'
