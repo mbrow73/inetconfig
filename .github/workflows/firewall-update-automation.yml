@@ -87,16 +87,26 @@ jobs:
 
           echo "$RULES" | awk -f update_script.awk > update_instructions.txt
 
-          # Now process updates/removes
-          NEW_RULES=$(jq -c '.[]' rules_in_file.json)
+          # Read rules as array (not line-by-line)
+          NEW_RULES=$(cat rules_in_file.json)
+
           while IFS= read -r inst; do
             IFS='|' read -r rulename action src dst ports proto dir just <<< "$inst"
             rulename=$(echo "$rulename" | xargs)
             action=$(echo "$action" | xargs)
             if [ "$action" = "remove" ]; then
-              NEW_RULES=$(echo "$NEW_RULES" | jq -cs "map(select(.name != \"$rulename\"))")
+              NEW_RULES=$(echo "$NEW_RULES" | jq "map(select(.name != \"$rulename\"))")
             elif [ "$action" = "update" ]; then
-              NEW_RULES=$(echo "$NEW_RULES" | jq -cs "map(if .name == \"$rulename\" then . + {src_ip_ranges: [\"$src\"], dest_ip_ranges: [\"$dst\"], ports: [\"$ports\"], protocol: \"$proto\", direction: \"$dir\", description: \"$just\"} else . end)")
+              update_expr=". + {"
+              [ -n "$src" ] && update_expr="${update_expr}src_ip_ranges: [\"$src\"],"
+              [ -n "$dst" ] && update_expr="${update_expr}dest_ip_ranges: [\"$dst\"],"
+              [ -n "$ports" ] && update_expr="${update_expr}ports: [\"$ports\"],"
+              [ -n "$proto" ] && update_expr="${update_expr}protocol: \"$proto\","
+              [ -n "$dir" ] && update_expr="${update_expr}direction: \"$dir\","
+              [ -n "$just" ] && update_expr="${update_expr}description: \"$just\","
+              # Remove trailing comma and close object
+              update_expr="${update_expr%,}}"
+              NEW_RULES=$(echo "$NEW_RULES" | jq "map(if .name == \"$rulename\" then $update_expr else . end)")
             fi
           done < update_instructions.txt
 
