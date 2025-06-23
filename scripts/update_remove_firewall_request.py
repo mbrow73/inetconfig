@@ -75,17 +75,16 @@ for blk in blocks:
     if '🔹 **New Source**' in text:
         # — UPDATE
         get = lambda pat: re.search(pat, text) and re.search(pat, text).group(1).strip()
-        old_name = get(r'🔹 \*\*Existing Name\*\*:\s*`([^`]+)`') \
-                   or die("Missing Existing Name in update block")
-        src  = get(r'🔹 \*\*New Source\*\*:\s*`([^`]+)`')     or die(f"Missing New Source for {old_name}")
-        dst  = get(r'🔹 \*\*New Destination\*\*:\s*`([^`]+)`') or die(f"Missing New Destination for {old_name}")
-        pts  = get(r'🔹 \*\*New Ports\*\*:\s*`([^`]+)`')       or die(f"Missing New Ports for {old_name}")
-        proto_input = get(r'🔹 \*\*New Protocol\*\*:\s*`([^`]+)`') \
-                   or die(f"Missing New Protocol for {old_name}")
-        direc = get(r'🔹 \*\*New Direction\*\*:\s*`([^`]+)`')   or die(f"Missing New Direction for {old_name}")
-        just  = get(r'🔹 \*\*New Justification\*\*:\s*(.+)')     or die(f"Missing Justification for {old_name}")
+        old_name   = get(r'🔹 \*\*Existing Name\*\*:\s*`([^`]+)`') \
+                     or die("Missing Existing Name in update block")
+        src        = get(r'🔹 \*\*New Source\*\*:\s*`([^`]+)`')     or die(f"Missing New Source for {old_name}")
+        dst        = get(r'🔹 \*\*New Destination\*\*:\s*`([^`]+)`') or die(f"Missing New Destination for {old_name}")
+        pts        = get(r'🔹 \*\*New Ports\*\*:\s*`([^`]+)`')       or die(f"Missing New Ports for {old_name}")
+        proto_input= get(r'🔹 \*\*New Protocol\*\*:\s*`([^`]+)`')    or die(f"Missing New Protocol for {old_name}")
+        direc      = get(r'🔹 \*\*New Direction\*\*:\s*`([^`]+)`')   or die(f"Missing New Direction for {old_name}")
+        just       = get(r'🔹 \*\*New Justification\*\*:\s*(.+)')     or die(f"Missing Justification for {old_name}")
 
-        # Validations
+        # validations
         if not all(valid_cidr(x) for x in src.split(',')):
             die(f"Bad CIDR in New Source for {old_name}")
         if not all(valid_cidr(x) for x in dst.split(',')):
@@ -97,10 +96,10 @@ for blk in blocks:
 
         old = by_name[old_name]
 
-        # Always normalize protocol to lowercase
+        # **Only** lowercase the protocol for the rule being updated
         proto = proto_input.lower()
 
-        # Build the new rule name (preserve parts, inject new CARID/REQID)
+        # build new name
         parts = old_name.split('-')
         if len(parts) >= 6:
             parts[1], parts[2] = carid, reqid
@@ -108,18 +107,19 @@ for blk in blocks:
         else:
             new_name = old_name
 
-        if old.get("carid","") != carid:
+        if old.get("carid", "") != carid:
             ownership_changed = True
 
+        # assemble the new rule dict
         new_rule = dict(old, **{
-            "name": new_name,
-            "src_ip_ranges":   [x.strip() for x in src.split(',')],
-            "dest_ip_ranges":  [x.strip() for x in dst.split(',')],
-            "ports":           [x.strip() for x in pts.split(',')],
-            "protocol":        proto,
-            "direction":       direc,
-            "description":     just,
-            "carid":           carid
+            "name":           new_name,
+            "src_ip_ranges":  [x.strip() for x in src.split(',')],
+            "dest_ip_ranges": [x.strip() for x in dst.split(',')],
+            "ports":          [x.strip() for x in pts.split(',')],
+            "protocol":       proto,
+            "direction":      direc,
+            "description":    just,
+            "carid":          carid
         })
 
         updates.append((old_name, new_rule))
@@ -133,15 +133,15 @@ for blk in blocks:
         get = lambda pat: re.search(pat, text) and re.search(pat, text).group(1).strip()
         old_name = get(r'🔹 \*\*Existing Name\*\*:\s*`([^`]+)`') \
                    or die("Missing Existing Name in removal block")
-        just = get(r'🔹 \*\*Justification\*\*:\s*(.+)') \
-               or die(f"Missing Justification for removal of {old_name}")
+        just     = get(r'🔹 \*\*Justification\*\*:\s*(.+)') \
+                   or die(f"Missing Justification for removal of {old_name}")
         if old_name not in by_name:
             die(f"Rule {old_name} not found for removal")
 
         removals.append(old_name)
         pr_lines.append(f"- **Remove** `{old_name}`\n  Justification: {just}")
 
-# 5) Read tfvars file lines
+# 5) Read tfvars file lines verbatim
 with open(sys.argv[2]) as f:
     lines = f.read().splitlines()
 
@@ -165,15 +165,15 @@ for old_name, new_rule in updates:
         die(f"Could not locate block for update of {old_name}")
 
     raw = json.dumps(new_rule, indent=2)
-    raw_lines = raw.splitlines()
+    block = raw.splitlines()
     indent = re.match(r'^(\s*)', lines[start]).group(1)
-    new_block = [indent + l for l in raw_lines]
+    new_block = [indent + l for l in block]
     if had_comma:
         new_block[-1] += ','
 
     lines = lines[:start] + new_block + lines[end+1:]
 
-# 8) Write the patched file
+# 8) Write the patched file back
 with open(sys.argv[3], 'w') as f:
     f.write('\n'.join(lines) + '\n')
 
