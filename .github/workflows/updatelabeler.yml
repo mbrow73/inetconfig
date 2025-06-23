@@ -11,7 +11,7 @@ jobs:
       - name: Print issue body for debug
         run: |
           echo "---- ISSUE BODY START ----"
-          echo "${{ github.event.issue.body }}"
+          printf '%s\n' "${{ github.event.issue.body }}"
           echo "---- ISSUE BODY END ----"
 
       - name: Add firewall-update-request label for template
