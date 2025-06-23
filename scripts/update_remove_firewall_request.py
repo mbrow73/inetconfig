@@ -19,35 +19,60 @@ def valid_ports(s):
         if not (1 <= int(p.split('-')[0]) <= 65535): return False
     return True
 
+def find_block(lines, name):
+    """Find the start/end line indexes of the JSON object whose "name" equals name.
+       Returns (start_idx, end_idx, had_comma_on_closing)."""
+    pat = re.compile(r'"name"\s*:\s*"' + re.escape(name) + r'"')
+    for i,line in enumerate(lines):
+        if pat.search(line):
+            # back up to the opening '{'
+            start = i
+            while start>0 and '{' not in lines[start]:
+                start -= 1
+            # now scan forward to match braces
+            brace = 0
+            end = start
+            had_comma = False
+            while end < len(lines):
+                brace += lines[end].count('{')
+                brace -= lines[end].count('}')
+                if brace == 0:
+                    # did the '}' line end with a comma?
+                    if lines[end].rstrip().endswith(','):
+                        had_comma = True
+                    break
+                end += 1
+            return start, end, had_comma
+    return None, None, None
+
 if len(sys.argv) != 4:
     die("Usage: update_remove_firewall_request.py <issue_body.md> <in.tfvars> <out.tfvars>")
 
-# 1) Load inputs
+# 1) Read issue body
 body = open(sys.argv[1], encoding='utf-8').read()
 m = re.search(r'Request ID \(REQID\):\s*(REQ\d+)', body)
 reqid = m.group(1) if m else die("Missing or invalid REQID")
 m = re.search(r'CARID:\s*([A-Za-z0-9_-]+)', body)
 carid = m.group(1) if m else die("Missing CARID")
 
-# 2) Parse blocks
+# 2) Split into #### Rule blocks
 blocks = re.split(r'#### Rule', body)[1:]
 if not blocks:
-    die("No ‘#### Rule’ blocks found")
+    die("No '#### Rule' blocks found")
 
-# 3) Load tfvars and isolate auto_firewall_rules
+# 3) Load tfvars
 tfvars = json.load(open(sys.argv[2]))
 rules = tfvars.get("auto_firewall_rules", [])
 by_name = {r["name"]: r for r in rules}
 
-updates = []   # tuples of (old_name, new_rule_dict)
-removals = []  # list of names to remove
+updates = []   # [(old_name, new_rule_dict)]
+removals = []  # [old_name]
 pr_lines = []
 ownership_changed = False
 
 for blk in blocks:
     text = blk.strip()
-
-    # decide update vs removal
+    # update if it has “New Source”, else removal
     if '🔹 **New Source**' in text:
         get = lambda pat: re.search(pat, text) and re.search(pat, text).group(1).strip()
         old_name = get(r'🔹 \*\*Existing Name\*\*:\s*`([^`]+)`') \
@@ -59,7 +84,7 @@ for blk in blocks:
         direc= get(r'🔹 \*\*New Direction\*\*:\s*`([^`]+)`')   or die(f"Missing New Direction for {old_name}")
         just = get(r'🔹 \*\*New Justification\*\*:\s*(.+)')     or die(f"Missing Justification for {old_name}")
 
-        # validate
+        # validations
         if not all(valid_cidr(x) for x in src.split(',')):
             die(f"Bad CIDR in New Source for {old_name}")
         if not all(valid_cidr(x) for x in dst.split(',')):
@@ -82,9 +107,9 @@ for blk in blocks:
 
         new_rule = dict(old, **{
             "name": new_name,
-            "src_ip_ranges": [x.strip() for x in src.split(",")],
-            "dest_ip_ranges":[x.strip() for x in dst.split(",")],
-            "ports":       [x.strip() for x in pts.split(",")],
+            "src_ip_ranges": [x.strip() for x in src.split(',')],
+            "dest_ip_ranges":[x.strip() for x in dst.split(',')],
+            "ports":       [x.strip() for x in pts.split(',')],
             "protocol":    proto,
             "direction":   direc,
             "description": just,
@@ -98,7 +123,7 @@ for blk in blocks:
         )
 
     else:
-        # removal block
+        # removal
         get = lambda pat: re.search(pat, text) and re.search(pat, text).group(1).strip()
         old_name = get(r'🔹 \*\*Existing Name\*\*:\s*`([^`]+)`') \
                    or die("Missing Existing Name in removal block")
@@ -106,24 +131,52 @@ for blk in blocks:
                or die(f"Missing Justification for removal of {old_name}")
         if old_name not in by_name:
             die(f"Rule {old_name} not found for removal")
+
         removals.append(old_name)
         pr_lines.append(f"- **Remove** `{old_name}`\n  Justification: {just}")
 
-# 4) Patch only the affected entries in-place
-#   - First remove
-rules = [r for r in rules if r["name"] not in removals]
-#   - Then apply updates
+# 4) Read tfvars file lines
+with open(sys.argv[2]) as f:
+    lines = f.read().splitlines()
+
+# Apply removals first
+for old_name in removals:
+    start, end, had_comma = find_block(lines, old_name)
+    if start is None:
+        die(f"Could not locate block for removal of {old_name}")
+    # Drop those lines
+    lines = lines[:start] + lines[end+1:]
+    # If the removed block was the _last_ (no comma), strip the comma of the previous line
+    if not had_comma:
+        idx = start - 1
+        while idx >= 0 and not lines[idx].strip():
+            idx -= 1
+        if idx >= 0 and lines[idx].rstrip().endswith(','):
+            lines[idx] = lines[idx].rstrip()[:-1]
+
+# Then apply updates
 for old_name, new_rule in updates:
-    for idx, r in enumerate(rules):
-        if r["name"] == old_name:
-            rules[idx] = new_rule
-            break
+    start, end, had_comma = find_block(lines, old_name)
+    if start is None:
+        die(f"Could not locate block for update of {old_name}")
 
-# 5) Write back
-tfvars["auto_firewall_rules"] = rules
-json.dump(tfvars, open(sys.argv[3], "w"), indent=2)
+    # Serialize the new block to JSON text
+    raw = json.dumps(new_rule, indent=2)
+    raw_lines = raw.splitlines()
+    indent = re.match(r'^(\s*)', lines[start]).group(1)
+    new_block = [indent + l for l in raw_lines]
+    # Preserve the trailing comma if originally present
+    if had_comma:
+        new_block[-1] += ','
 
-# 6) Emit PR outputs
+    # Replace in-place
+    lines = lines[:start] + new_block + lines[end+1:]
+
+# 5) Write patched file
+with open(sys.argv[3], 'w') as f:
+    f.write('\n'.join(lines) + '\n')
+
+# 6) Emit outputs
 print(f"::set-output name=reqid::{reqid}")
 print(f"::set-output name=pr_body::{chr(10).join(pr_lines)}")
 print(f"::set-output name=ownership_changed::{str(ownership_changed).lower()}")
