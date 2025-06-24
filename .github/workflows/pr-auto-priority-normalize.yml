@@ -1,0 +1,46 @@
+name: 🔄 Normalize Firewall Rule Priorities in PR
+
+on:
+  pull_request:
+    paths:
+      - 'firewall-requests/*.auto.tfvars.json'
+      - '.github/scripts/priority_normalizer.py'
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  normalize-priorities:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
+        with:
+          # IMPORTANT: must checkout the PR branch, not main
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install requirements
+        run: pip install --upgrade pip
+
+      - name: Run priority normalization
+        run: python .github/scripts/priority_normalizer.py
+
+      - name: Commit and push any fixes (auto-update PR)
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: normalize firewall rule priorities (auto)"
+          file_pattern: "firewall-requests/*.auto.tfvars.json"
+          skip_checkout: true
+
+      - name: Show changes (for logs/debug)
+        run: |
+          git diff --stat || true
