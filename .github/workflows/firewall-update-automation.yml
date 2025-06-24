@@ -13,6 +13,8 @@ jobs:
   process:
     if: contains(github.event.issue.labels.*.name, 'firewall-update-request')
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v4
@@ -20,19 +22,23 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: 📝 Parse Issue for Update/Remove, Modify JSON (Debug Mode)
+      - name: 📝 Parse Issue for Update/Remove, Modify JSON
         id: parse_and_update
         shell: bash
         run: |
           set -e
-          set -x  # Enables bash tracing
-
-          echo "=== ISSUE BODY ==="
-          echo "${{ github.event.issue.body }}"
+          set -x
 
           ISSUE_BODY="${{ github.event.issue.body }}"
-          REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
-          CARID=$(echo "$ISSUE_BODY" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
+
+          # Strip out instructions (everything between <!-- and -->)
+          ISSUE_BODY_CLEAN=$(echo "$ISSUE_BODY" | sed '/<!--/,/-->/d')
+
+          echo "=== CLEANED ISSUE BODY ==="
+          echo "$ISSUE_BODY_CLEAN"
+
+          REQID=$(echo "$ISSUE_BODY_CLEAN" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
+          CARID=$(echo "$ISSUE_BODY_CLEAN" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
           echo "REQID: $REQID"
           echo "CARID: $CARID"
           if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
@@ -46,7 +52,7 @@ jobs:
           cat "$JSON_PATH"
 
           # Parse rule blocks
-          RULES=$(echo "$ISSUE_BODY" | awk '
+          RULES=$(echo "$ISSUE_BODY_CLEAN" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
               if(rule){
@@ -103,7 +109,6 @@ jobs:
           echo "=== UPDATE INSTRUCTIONS ==="
           cat update_instructions.txt
 
-          # Read rules as array (not line-by-line)
           NEW_RULES=$(cat rules_in_file.json)
           echo "=== NEW_RULES START ==="
           echo "$NEW_RULES"
@@ -139,6 +144,9 @@ jobs:
           echo "$TFVARS" | jq '.'
           echo "$TFVARS" | jq '.' > "$JSON_PATH"
 
+          # Export for PR step
+          echo "REQID=$REQID" >> $GITHUB_ENV
+
       - name: ⏫ Create or Update Pull Request for NetSec
         id: cpr
         uses: peter-evans/create-pull-request@v6
@@ -159,7 +167,7 @@ jobs:
 
             > **NetSec:** Please review and merge if approved.  
           add-paths: |
-            firewall-requests/*.auto.tfvars.json
+            firewall-requests/${{ env.REQID }}.auto.tfvars.json
           base: main
 
       - name: 💬 Comment PR Link to Issue
