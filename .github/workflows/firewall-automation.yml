@@ -33,7 +33,8 @@ jobs:
           python3 .github/scripts/firewall_request_validator.py issue.txt > validation_output.txt || VALIDATION_FAILED=1
           if [[ "$VALIDATION_FAILED" == "1" ]]; then
             ERRORS=$(awk '/VALIDATION_ERRORS_START/,/VALIDATION_ERRORS_END/' validation_output.txt | sed '/VALIDATION_ERRORS_START\|VALIDATION_ERRORS_END/d')
-            gh issue comment ${{ github.event.issue.number }} --body "### ❌ Firewall Request Validation Failed\n$ERRORS\n\n_Your request was closed. Please correct the above and submit again._"
+            # Format errors as markdown bullets for readability
+            gh issue comment ${{ github.event.issue.number }} --body $'### ❌ Firewall Request Validation Failed\n\n**Errors:**\n\n'"$(echo "$ERRORS" | sed 's/^/- /')"'\n\n_Your request was closed. Please correct the above and submit again._'
             gh issue close ${{ github.event.issue.number }}
             exit 1
           fi
