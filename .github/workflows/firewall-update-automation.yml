@@ -1,4 +1,4 @@
-name: 🔄 Firewall Rule Update/Removal Requests
+name: 🔄 Firewall Rule Update/Removal Request
 
 on:
   issues:
@@ -20,22 +20,30 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: 📝 Parse Issue for Update/Remove/Move, Modify JSON
-        id: parse_and_update
+      - name: 📝 Parse & Apply Update/Remove/Move
+        id: update
         shell: bash
         run: |
           set -e
           set -x
 
+          # 1. Clean out any instructions between <!-- and -->
           ISSUE_BODY="${{ github.event.issue.body }}"
-          # Remove markdown instructions for clean parsing
           ISSUE_BODY_CLEAN=$(echo "$ISSUE_BODY" | sed '/<!--/,/-->/d')
 
-          # Prepare scratch for touched REQIDs
-          touch reqids_touched.txt
+          echo "=== CLEANED ISSUE BODY ==="
+          echo "$ISSUE_BODY_CLEAN"
 
-          # Parse each rule block
-          echo "$ISSUE_BODY_CLEAN" | awk '
+          # 2. Parse out new REQID (where rule should end up after update)
+          REQID=$(echo "$ISSUE_BODY_CLEAN" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
+          CARID=$(echo "$ISSUE_BODY_CLEAN" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
+          echo "REQID: $REQID"
+          echo "CARID: $CARID"
+          if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
+          if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
+
+          # 3. Parse all rules
+          RULES=$(echo "$ISSUE_BODY_CLEAN" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
               if(rule){
@@ -55,123 +63,162 @@ jobs:
                 print rule_block
               }
             }
-          ' > all_rules.txt
+          ')
+          echo "=== RULES PARSED ==="
+          echo "$RULES"
 
-          # Process each rule instruction
-          awk 'BEGIN{RS="@@@"} NR>0 && NF{print > ("rule_" NR ".txt")}' all_rules.txt
+          # 4. Parse update instructions to intermediate file
+          cat > update_script.awk <<'EOS'
+          BEGIN{FS=": ";OFS=": ";}
+          function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
+          {
+            if ($1 ~ /Existing Rule Name/) rulename=trim($2)
+            else if ($1 ~ /Action/) action=trim($2)
+            else if ($1 ~ /New Source/) src=trim($2)
+            else if ($1 ~ /New Destination/) dst=trim($2)
+            else if ($1 ~ /New Port/) ports=trim($2)
+            else if ($1 ~ /New Protocol/) proto=trim($2)
+            else if ($1 ~ /New Direction/) dir=trim($2)
+            else if ($1 ~ /New Business Justification/) just=trim($2)
+            else if ($1 ~ /#### Rule/) {
+              if(rulename && action) {
+                print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
+              }
+              rulename=action=src=dst=ports=proto=dir=just=""
+            }
+          }
+          END{
+            if(rulename && action) print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
+          }
+          EOS
 
-          for f in rule_*.txt; do
-            rulename=""
-            action=""
-            newreqid=""
-            src=""
-            dst=""
-            ports=""
-            proto=""
-            dir=""
-            just=""
-            while IFS= read -r line; do
-              case "$line" in
-                *"Existing Rule Name:"*) rulename=$(echo "$line" | cut -d: -f2- | xargs) ;;
-                *"Action:"*) action=$(echo "$line" | cut -d: -f2- | xargs | tr '[:upper:]' '[:lower:]') ;;
-                *"New REQID:"*) newreqid=$(echo "$line" | cut -d: -f2- | xargs) ;;
-                *"New Source"*) src=$(echo "$line" | cut -d: -f2- | xargs) ;;
-                *"New Destination"*) dst=$(echo "$line" | cut -d: -f2- | xargs) ;;
-                *"New Port"*) ports=$(echo "$line" | cut -d: -f2- | xargs) ;;
-                *"New Protocol"*) proto=$(echo "$line" | cut -d: -f2- | xargs) ;;
-                *"New Direction"*) dir=$(echo "$line" | cut -d: -f2- | xargs) ;;
-                *"New Business Justification"*) just=$(echo "$line" | cut -d: -f2- | xargs) ;;
-              esac
-            done < "$f"
+          echo "$RULES" | awk -f update_script.awk > update_instructions.txt
+          echo "=== UPDATE INSTRUCTIONS ==="
+          cat update_instructions.txt
 
-            # Extract REQID, CARID, etc. from the existing rule name
-            oldreqid=$(echo "$rulename" | awk -F'-' '{print $2}')
-            carid=$(echo "$rulename" | awk -F'-' '{print $3}')
-            proto_part=$(echo "$rulename" | awk -F'-' '{print $(NF-2)}')
-            port_part=$(echo "$rulename" | awk -F'-' '{print $(NF-1)}')
-            rule_number=$(echo "$rulename" | awk -F'-' '{print $NF}')
-            [ -z "$newreqid" ] && newreqid="$oldreqid"
-            new_name="AUTO-${newreqid}-${carid}-${proto_part}-${port_part}-${rule_number}"
+          # 5. For each rule, find the file, update/move/remove as needed
+          shopt -s nullglob
 
-            # Paths
-            old_json="firewall-requests/${oldreqid}.auto.tfvars.json"
-            new_json="firewall-requests/${newreqid}.auto.tfvars.json"
+          declare -A rule_to_file
+          for f in firewall-requests/*.auto.tfvars.json; do
+            jq -c '.auto_firewall_rules[]' "$f" | while read -r rule; do
+              rulename=$(echo "$rule" | jq -r '.name')
+              rule_to_file["$rulename"]="$f"
+            done
+          done
 
-            # Ensure old_json exists
-            if [ ! -f "$old_json" ]; then
-              echo "::warning file=$old_json::Could not find source tfvars file for $rulename. Skipping."
+          # Make a temp dir for new files
+          mkdir -p firewall-requests-updated
+          cp firewall-requests/*.auto.tfvars.json firewall-requests-updated/ 2>/dev/null || true
+
+          while IFS= read -r inst; do
+            IFS='|' read -r existing_rulename action src dst ports proto dir just <<< "$inst"
+            existing_rulename=$(echo "$existing_rulename" | xargs)
+            action=$(echo "$action" | xargs)
+            src=$(echo "$src" | xargs)
+            dst=$(echo "$dst" | xargs)
+            ports=$(echo "$ports" | xargs)
+            proto=$(echo "$proto" | xargs)
+            dir=$(echo "$dir" | xargs)
+            just=$(echo "$just" | xargs)
+            echo "---"
+            echo "Processing: $existing_rulename | $action"
+
+            # Find file containing this rule
+            old_file="${rule_to_file[$existing_rulename]}"
+            if [ -z "$old_file" ]; then
+              echo "Rule $existing_rulename not found in any file, skipping"
               continue
             fi
 
-            # Load old rules
-            cp "$old_json" "${old_json}.bak"
-            jq '.auto_firewall_rules' "$old_json" > rules_in_file.json
-
-            # Remove rule from old file if moving/removing
-            if [ "$action" = "remove" ] || ([ "$action" = "move" ] && [ "$newreqid" != "$oldreqid" ]); then
-              jq "map(select(.name != \"$rulename\"))" rules_in_file.json > new_rules.json
-              jq '{auto_firewall_rules: .}' new_rules.json > "$old_json"
-              echo "$oldreqid" >> reqids_touched.txt
+            # Get current rule object and parse fields
+            rule_obj=$(jq -c --arg name "$existing_rulename" '.auto_firewall_rules[] | select(.name==$name)' "$old_file")
+            if [ -z "$rule_obj" ]; then
+              echo "Rule object not found for $existing_rulename in $old_file"
+              continue
             fi
 
-            # Add or update rule in new file if updating or moving
-            if [ "$action" = "update" ] || [ "$action" = "move" ]; then
-              # Create new file if needed
-              [ -f "$new_json" ] || echo '{"auto_firewall_rules":[]}' > "$new_json"
-              # Remove old rule from new file if present (avoid dupes)
-              jq '.auto_firewall_rules' "$new_json" | jq "map(select(.name != \"$rulename\"))" > rules_temp.json
+            # Parse old reqid and carid from rule name (AUTO-REQ123123-445566-TCP-443-1)
+            old_reqid=$(echo "$existing_rulename" | awk -F- '{print $2}')
+            old_carid=$(echo "$existing_rulename" | awk -F- '{print $3}')
 
-              # Build update expression
-              update_expr=". + {"
-              [ -n "$src" ] && update_expr="${update_expr}src_ip_ranges: [\"$src\"],"
-              [ -n "$dst" ] && update_expr="${update_expr}dest_ip_ranges: [\"$dst\"],"
-              [ -n "$ports" ] && update_expr="${update_expr}ports: [\"$ports\"],"
-              [ -n "$proto" ] && update_expr="${update_expr}protocol: \"$proto\","
-              [ -n "$dir" ] && update_expr="${update_expr}direction: \"$dir\","
-              [ -n "$just" ] && update_expr="${update_expr}description: \"$just\","
-              update_expr="${update_expr%,}}"
+            # Remove from old file
+            jq 'del(.auto_firewall_rules[] | select(.name == "'"$existing_rulename"'"))' "$old_file" > "$old_file.tmp"
+            mv "$old_file.tmp" "$old_file"
 
-              # Build new rule JSON (merge with old fields, then update fields)
-              old_rule=$(jq -c ".[] | select(.name == \"$rulename\")" rules_in_file.json)
-              if [ -z "$old_rule" ]; then
-                echo "::warning::Could not find rule $rulename in $old_json. Skipping."
-                continue
-              fi
-              new_rule=$(echo "$old_rule" | jq "$update_expr" | jq ".name = \"$new_name\"")
-
-              # Append to new file's rules
-              jq ". + [$new_rule]" rules_temp.json > rules_updated.json
-              jq '{auto_firewall_rules: .}' rules_updated.json > "$new_json"
-              echo "$newreqid" >> reqids_touched.txt
+            if [ "$action" = "remove" ]; then
+              echo "Removed $existing_rulename from $old_file"
+              continue
             fi
 
+            # If update, possibly move to new file and change rule name
+            new_rulename=$existing_rulename
+            if [ "$REQID" != "$old_reqid" ]; then
+              # Change rule name to use new REQID and current CARID
+              # Preserving rest of naming convention (TCP, port, etc)
+              new_rulename=$(echo "$existing_rulename" | sed "s/$old_reqid/$REQID/")
+              new_file="firewall-requests-updated/${REQID}.auto.tfvars.json"
+            else
+              new_file="$old_file"
+            fi
+
+            # Build new rule object (update fields if provided)
+            new_rule=$(echo "$rule_obj" | jq '.name = "'$new_rulename'"')
+            [ -n "$src" ]  && new_rule=$(echo "$new_rule" | jq '.src_ip_ranges = ["'"$src"'"]')
+            [ -n "$dst" ]  && new_rule=$(echo "$new_rule" | jq '.dest_ip_ranges = ["'"$dst"'"]')
+            [ -n "$ports" ] && new_rule=$(echo "$new_rule" | jq '.ports = ["'"$ports"'"]')
+            [ -n "$proto" ] && new_rule=$(echo "$new_rule" | jq '.protocol = "'"$proto"'"')
+            [ -n "$dir" ]   && new_rule=$(echo "$new_rule" | jq '.direction = "'"$dir"'"')
+            [ -n "$just" ]  && new_rule=$(echo "$new_rule" | jq '.description = "'"$just"'"')
+
+            # Add updated rule to new file
+            if [ ! -f "$new_file" ]; then
+              echo '{"auto_firewall_rules": []}' > "$new_file"
+            fi
+            tmpfile=$(mktemp)
+            jq --argjson rule "$new_rule" '.auto_firewall_rules += [$rule]' "$new_file" > "$tmpfile"
+            mv "$tmpfile" "$new_file"
+
+            echo "Updated rule written to $new_file as $new_rulename"
+
+            # If moved to new file, update rule_to_file for next loop
+            rule_to_file["$new_rulename"]="$new_file"
+
+          done < update_instructions.txt
+
+          # Copy everything back to working dir
+          cp firewall-requests-updated/*.auto.tfvars.json firewall-requests/
+
+          # Show diffs
+          echo "=== FILES AFTER ==="
+          ls -l firewall-requests/*.auto.tfvars.json
+          for f in firewall-requests/*.auto.tfvars.json; do
+            echo "----- $f -----"
+            cat "$f"
           done
 
-          # Remove duplicate REQIDs touched
-          sort -u reqids_touched.txt > reqids_unique.txt
-
-          # For PR step, set env
-          echo "REQIDS=$(paste -sd, reqids_unique.txt)" >> $GITHUB_ENV
+          # Export for PR step
+          echo "REQID=$REQID" >> $GITHUB_ENV
 
       - name: ⏫ Create or Update Pull Request for NetSec
         id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
           commit-message: |
-            [Firewall Automation] Update/remove/move rules for ${{ env.REQIDS }}
-          branch: firewall/${{ env.REQIDS }}-update-${{ github.event.issue.number }}
-          title: "Firewall update/removal: ${{ env.REQIDS }} (Issue #${{ github.event.issue.number }})"
+            [Firewall Automation] Update/remove rules for ${{ env.REQID }}
+          branch: firewall/${{ env.REQID }}-update-${{ github.event.issue.number }}
+          title: "Firewall update/removal: ${{ env.REQID }} (Issue #${{ github.event.issue.number }})"
           body: |
-            Automated firewall rule update/removal/move for REQID(s): `${{ env.REQIDS }}`.
+            Automated firewall rule update/removal for REQID `${{ env.REQID }}`.
 
             **Summary:**
             - Source: ${{ github.event.issue.user.login }}
             - Related Issue: #${{ github.event.issue.number }}
 
             **Rules:**  
-            _See the affected file(s) in `firewall-requests/` for full details._
+            _See the file `firewall-requests/${{ env.REQID }}.auto.tfvars.json` for full details._
 
-            > **NetSec:** Please review and merge if approved.  
+            > **NetSec:** Please review and merge if approved.
           add-paths: |
             firewall-requests/*.auto.tfvars.json
           base: main
