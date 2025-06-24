@@ -11,25 +11,29 @@ permissions:
 jobs:
   normalize-main:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install requirements
         run: pip install --upgrade pip
-
       - name: Run normalization script
         run: python .github/scripts/post_merge_priority_normalizer.py
-
-      - name: Commit and push any fixes
-        uses: stefanzweifel/git-auto-commit-action@v5
+      - name: Create or Update Normalization PR
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
         with:
-          commit_message: "fix: post-merge normalize firewall rule priorities"
-          file_pattern: "firewall-requests/*.auto.tfvars.json"
+          commit-message: |
+            fix: post-merge normalize firewall rule priorities
+          branch: auto/normalize-priorities
+          title: "Auto: Normalize Firewall Rule Priorities"
+          body: |
+            This PR automatically normalizes firewall rule priorities after merges to main.
+            Please review and merge.
+          add-paths: |
+            firewall-requests/*.auto.tfvars.json
+          base: main
