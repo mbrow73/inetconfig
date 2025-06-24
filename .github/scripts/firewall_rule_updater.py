@@ -3,11 +3,13 @@ import sys
 import os
 import glob
 import json
-import shutil
 import ipaddress
 
 def validate_reqid(reqid):
     return bool(re.fullmatch(r"REQ\d{7,8}", reqid))
+
+def validate_carid(carid):
+    return bool(re.fullmatch(r"\d{9}", carid))
 
 def validate_ip(ip):
     try:
@@ -42,23 +44,29 @@ def load_all_rules():
                 file_map[rule["name"]] = path
     return rule_map, file_map
 
-def update_rule_fields(rule, updates, new_reqid):
-    # Keep the rest of the rule, but update only fields provided
+def update_rule_fields(rule, updates, new_reqid, new_carid):
+    # Extract protocol, ports, direction for rule name
+    proto = updates.get("protocol") or rule["protocol"]
+    ports = updates.get("ports") or rule["ports"]
+    direction = updates.get("direction") or rule["direction"]
+    carid = new_carid or rule["name"].split("-")[2]
+    # Rule name: AUTO-REQID-CARID-PROTO-PORTS-INDEX
+    parts = rule["name"].split("-")
+    idx = parts[-1] if len(parts) > 1 else "1"
+    new_name = f"AUTO-{new_reqid}-{carid}-{proto.upper()}-{','.join(ports)}-{idx}"
+    rule["name"] = new_name
+
+    # Update all relevant fields if specified
     for k, v in updates.items():
         if v:
-            # handle protocol normalization
-            if k == "protocol":
-                v = v.lower()
-            rule[k] = v
-    # Update the name and description to use the new REQID
-    parts = rule["name"].split("-")
-    parts[1] = new_reqid  # REQ
-    rule["name"] = "-".join(parts)
-    # Update description if it contains old REQID
-    desc = rule.get("description", "")
-    old_reqid = parts[2] if len(parts) > 2 else ""
-    rule["description"] = rule["name"] + " | " + rule.get("description", "").split("|",1)[-1]
-    # Optionally: Add/update a 'history' field here
+            if k in ["protocol", "direction"]:
+                rule[k] = v.lower()
+            else:
+                rule[k] = v
+
+    # Update CARID in description
+    desc_just = updates.get("description") or rule.get("description", "").split("|",1)[-1]
+    rule["description"] = f"{new_name} | {desc_just.strip()}"
     return rule
 
 def validate_rule(rule, idx=1):
@@ -79,10 +87,20 @@ def validate_rule(rule, idx=1):
     # Direction
     if rule.get("direction","").upper() not in {"INGRESS", "EGRESS"}:
         errors.append(f"Rule {idx}: Direction must be INGRESS or EGRESS.")
+    # CARID
+    carid = rule["name"].split("-")[2]
+    if not validate_carid(carid):
+        errors.append(f"Rule {idx}: CARID must be 9 digits. Found: '{carid}'.")
     return errors
 
+def parse_blocks(issue_body):
+    # Matches "#### Rule N" or "Rule N", splits on each, returns blocks
+    blocks = re.split(r"(?:^|\n)#{0,6}\s*Rule\s*\d+\s*\n", issue_body, flags=re.IGNORECASE)
+    # The first block is before Rule 1, so skip it
+    return [b for b in blocks[1:] if b.strip()]
+
 def main():
-    # Accept issue body as single arg
+    # Accept issue body as single arg or from stdin
     if len(sys.argv) == 2:
         issue_body = sys.argv[1]
     else:
@@ -95,20 +113,21 @@ def main():
     if not new_reqid or not validate_reqid(new_reqid):
         errors.append(f"New REQID must be 'REQ' followed by 7 or 8 digits. Found: '{new_reqid}'.")
 
-    # Parse all rule blocks
-    rule_blocks = re.split(r"#### Rule", issue_body, flags=re.IGNORECASE)[1:]
+    # Parse rule blocks
+    rule_blocks = parse_blocks(issue_body)
     updates = []
     for idx, block in enumerate(rule_blocks, 1):
-        # Current Rule Name is required
-        m_name = re.search(r"Current Rule Name.*?:\s*([A-Za-z0-9\-]+)", block, re.IGNORECASE)
+        # Robustly match current rule name (ignore bullet, whitespace, etc)
+        m_name = re.search(r"Current Rule Name.*?:\s*([^\n]+)", block, re.IGNORECASE)
         rule_name = m_name.group(1).strip() if m_name else None
         if not rule_name:
             errors.append(f"Rule {idx}: 'Current Rule Name' is required.")
             continue
-        # Parse fields (optional)
         def extract(label):
             m = re.search(rf"{label}.*?:\s*(.+)", block, re.IGNORECASE)
-            return m.group(1).strip() if m else ""
+            val = m.group(1).strip() if m else ""
+            return val
+
         updates.append({
             "idx": idx,
             "rule_name": rule_name,
@@ -117,13 +136,12 @@ def main():
             "ports": [p.strip() for p in extract("New Port").split(",") if p.strip()],
             "protocol": extract("New Protocol"),
             "direction": extract("New Direction"),
+            "carid": extract("New CARID"),
             "description": extract("New Business Justification"),
         })
 
-    # Load all current rules and their file paths
+    # Load all rules and file paths
     rule_map, file_map = load_all_rules()
-
-    # Actually apply updates
     rules_to_write = {}  # filename -> list of rules
     updated_rule_names = set()
     for update in updates:
@@ -134,14 +152,14 @@ def main():
             continue
         rule = rule_map[rule_name]
         old_file = file_map[rule_name]
-        # Remove rule from its old file's rule list (will rewrite below)
+        # Remove rule from old file for update
         if old_file not in rules_to_write:
             with open(old_file) as f:
                 data = json.load(f)
             rules_to_write[old_file] = [r for r in data.get("auto_firewall_rules", []) if r["name"] != rule_name]
         else:
             rules_to_write[old_file] = [r for r in rules_to_write[old_file] if r["name"] != rule_name]
-        # Prepare updates (ignore blank fields)
+        # Prepare update dict
         new_fields = {}
         if update["src_ip_ranges"]: new_fields["src_ip_ranges"] = update["src_ip_ranges"]
         if update["dest_ip_ranges"]: new_fields["dest_ip_ranges"] = update["dest_ip_ranges"]
@@ -149,21 +167,21 @@ def main():
         if update["protocol"]: new_fields["protocol"] = update["protocol"]
         if update["direction"]: new_fields["direction"] = update["direction"]
         if update["description"]: new_fields["description"] = update["description"]
-        rule = update_rule_fields(rule, new_fields, new_reqid)
-        # Validate new rule
+        new_carid = update["carid"]
+        # Apply changes
+        rule = update_rule_fields(rule, new_fields, new_reqid, new_carid)
         rule_errors = validate_rule(rule, idx=idx)
         if rule_errors: errors.extend(rule_errors)
-        # Queue for writing
         updated_rule_names.add(rule["name"])
         rules_to_write.setdefault(old_file, []).append(rule)
 
-    # If no errors, handle file renaming if necessary
+    # If no errors, handle file renaming if needed
     if not errors:
         for old_file, rules in rules_to_write.items():
             if not rules:
                 os.remove(old_file)
                 continue
-            # Determine if filename needs to be changed
+            # If file doesn't already have new REQID, rename
             filename_reqs = re.findall(r"REQ\d{7,8}", old_file)
             if new_reqid and (not filename_reqs or new_reqid not in filename_reqs):
                 new_name = new_reqid + "-" + "-".join(filename_reqs) + ".auto.tfvars.json"
