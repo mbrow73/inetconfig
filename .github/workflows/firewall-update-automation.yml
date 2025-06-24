@@ -168,7 +168,7 @@ jobs:
             rule_to_file["$new_rulename"]="$new_file"
           done < update_instructions.txt
 
-          # 7. Delete any now-empty files
+          # 7. Delete any now-empty files in the UPDATED directory
           for f in firewall-requests-updated/*.auto.tfvars.json; do
             if [ -f "$f" ]; then
               rulecount=$(jq '.auto_firewall_rules | length' "$f")
@@ -181,6 +181,15 @@ jobs:
 
           # 8. Overwrite working directory with results
           cp firewall-requests-updated/*.auto.tfvars.json firewall-requests/ 2>/dev/null || true
+
+          # 9. Remove any original .auto.tfvars.json files that do not exist in the updated dir
+          for f in firewall-requests/*.auto.tfvars.json; do
+            updated_file="firewall-requests-updated/$(basename "$f")"
+            if [ ! -f "$updated_file" ]; then
+              echo "Deleting stale file from source dir: $f"
+              rm -f "$f"
+            fi
+          done
 
           echo "=== FILES AFTER ==="
           ls -l firewall-requests/*.auto.tfvars.json || true
