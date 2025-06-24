@@ -34,7 +34,7 @@ jobs:
           echo "=== CLEANED ISSUE BODY ==="
           echo "$ISSUE_BODY_CLEAN"
 
-          # 2. Parse out new REQID (where rule should end up after update)
+          # 2. Parse out new REQID and CARID
           REQID=$(echo "$ISSUE_BODY_CLEAN" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
           CARID=$(echo "$ISSUE_BODY_CLEAN" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
           echo "REQID: $REQID"
@@ -67,37 +67,28 @@ jobs:
           echo "=== RULES PARSED ==="
           echo "$RULES"
 
-          # 4. Parse update instructions, one per rule (FIXED AWK LOGIC)
-          cat > update_script.awk <<'EOS'
-          BEGIN{FS=": ";OFS=": ";}
-          function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
-          {
-            if ($1 ~ /Existing Rule Name/) rulename=trim($2)
-            else if ($1 ~ /Action/) action=trim($2)
-            else if ($1 ~ /New Source/) src=trim($2)
-            else if ($1 ~ /New Destination/) dst=trim($2)
-            else if ($1 ~ /New Port/) ports=trim($2)
-            else if ($1 ~ /New Protocol/) proto=trim($2)
-            else if ($1 ~ /New Direction/) dir=trim($2)
-            else if ($1 ~ /New Business Justification/) just=trim($2)
-          }
-          ENDFILE{
-            if(rulename && action)
-              print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
-            rulename=action=src=dst=ports=proto=dir=just=""
-          }
-          EOS
+          # 4. Parse update instructions, one per rule
+          echo "$RULES" | awk -v RS="@@@" '
+            BEGIN{FS=": ";OFS=": ";}
+            function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
+            {
+              rulename=action=src=dst=ports=proto=dir=just=""
+              for(i=1;i<=NF;i++) {
+                if ($i ~ /Existing Rule Name/) rulename=trim($(i+1))
+                else if ($i ~ /Action/) action=trim($(i+1))
+                else if ($i ~ /New Source/) src=trim($(i+1))
+                else if ($i ~ /New Destination/) dst=trim($(i+1))
+                else if ($i ~ /New Port/) ports=trim($(i+1))
+                else if ($i ~ /New Protocol/) proto=trim($(i+1))
+                else if ($i ~ /New Direction/) dir=trim($(i+1))
+                else if ($i ~ /New Business Justification/) just=trim($(i+1))
+              }
+              if(rulename && action) print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
+            }
+          ' | grep . > update_instructions.txt
 
-          # Use @@@ record separator for multi-rule support
-          echo "$RULES" | awk -v RS="@@@" -f update_script.awk | grep . > update_instructions.txt || true
           echo "=== UPDATE INSTRUCTIONS ==="
           cat update_instructions.txt
-
-          # SAFETY: Stop gracefully if no instructions were found!
-          if [[ ! -s update_instructions.txt ]]; then
-            echo "No valid update instructions parsed. Exiting with success (nothing to do)."
-            exit 0
-          fi
 
           # 5. For each rule, find the file, update/move/remove as needed
           shopt -s nullglob
@@ -109,11 +100,9 @@ jobs:
             done < <(jq -r '.auto_firewall_rules[].name' "$f")
           done
 
-          # Make a temp dir for new files
           mkdir -p firewall-requests-updated
           cp firewall-requests/*.auto.tfvars.json firewall-requests-updated/ 2>/dev/null || true
 
-          # Track files that might become empty
           declare -A touched_files
 
           while IFS= read -r inst; do
@@ -129,7 +118,6 @@ jobs:
             echo "---"
             echo "Processing: $existing_rulename | $action"
 
-            # Find file containing this rule
             old_file="${rule_to_file[$existing_rulename]}"
             if [ -z "$old_file" ]; then
               echo "Rule $existing_rulename not found in any file, skipping"
@@ -138,37 +126,38 @@ jobs:
 
             touched_files["$old_file"]=1
 
-            # Get current rule object and parse fields
+            # Remove the rule from the original file (even if we're just updating/moving)
+            jq 'del(.auto_firewall_rules[] | select(.name == "'"$existing_rulename"'"))' "$old_file" > "firewall-requests-updated/$(basename "$old_file")"
+
+            # If remove, done!
+            if [ "$action" = "remove" ]; then
+              echo "Removed $existing_rulename from $old_file"
+              continue
+            fi
+
+            # Otherwise, move or update (add to new file)
             rule_obj=$(jq -c --arg name "$existing_rulename" '.auto_firewall_rules[] | select(.name==$name)' "$old_file")
             if [ -z "$rule_obj" ]; then
               echo "Rule object not found for $existing_rulename in $old_file"
               continue
             fi
 
-            # Parse old reqid and carid from rule name
             old_reqid=$(echo "$existing_rulename" | awk -F- '{print $2}')
-            old_carid=$(echo "$existing_rulename" | awk -F- '{print $3}')
 
-            # Remove from old file
-            jq 'del(.auto_firewall_rules[] | select(.name == "'"$existing_rulename"'"))' "$old_file" > "$old_file.tmp"
-            mv "$old_file.tmp" "$old_file"
-
-            if [ "$action" = "remove" ]; then
-              echo "Removed $existing_rulename from $old_file"
-              continue
-            fi
-
-            # If update, possibly move to new file and change rule name
             new_rulename=$existing_rulename
             if [ "$REQID" != "$old_reqid" ]; then
-              # Change rule name to use new REQID and current CARID (rest of naming preserved)
               new_rulename=$(echo "$existing_rulename" | sed "s/$old_reqid/$REQID/")
               new_file="firewall-requests-updated/${REQID}.auto.tfvars.json"
             else
-              new_file="$old_file"
+              new_file="firewall-requests-updated/$(basename "$old_file")"
             fi
 
-            # Build new rule object (update fields if provided)
+            # Add updated/moved rule to new file
+            if [ ! -f "$new_file" ]; then
+              echo '{"auto_firewall_rules": []}' > "$new_file"
+            fi
+
+            # Build the new rule object (update fields if provided)
             new_rule=$(echo "$rule_obj" | jq '.name = "'$new_rulename'"')
             [ -n "$src" ]  && new_rule=$(echo "$new_rule" | jq '.src_ip_ranges = ["'"$src"'"]')
             [ -n "$dst" ]  && new_rule=$(echo "$new_rule" | jq '.dest_ip_ranges = ["'"$dst"'"]')
@@ -177,40 +166,28 @@ jobs:
             [ -n "$dir" ]   && new_rule=$(echo "$new_rule" | jq '.direction = "'"$dir"'"')
             [ -n "$just" ]  && new_rule=$(echo "$new_rule" | jq '.description = "'"$just"'"')
 
-            # Add updated rule to new file
-            if [ ! -f "$new_file" ]; then
-              echo '{"auto_firewall_rules": []}' > "$new_file"
-            fi
             tmpfile=$(mktemp)
             jq --argjson rule "$new_rule" '.auto_firewall_rules += [$rule]' "$new_file" > "$tmpfile"
             mv "$tmpfile" "$new_file"
 
-            echo "Updated rule written to $new_file as $new_rulename"
-
-            # If moved to new file, update rule_to_file for next loop
-            rule_to_file["$new_rulename"]="$new_file"
             touched_files["$new_file"]=1
 
           done < update_instructions.txt
 
-          # Clean up any empty tfvars files (no more rules left)
-          for f in "${!touched_files[@]}"; do
+          # Delete any file from updated dir if it's now empty
+          for f in firewall-requests-updated/*.auto.tfvars.json; do
             if [ -f "$f" ]; then
               rulecount=$(jq '.auto_firewall_rules | length' "$f")
               if [ "$rulecount" -eq 0 ]; then
                 echo "Deleting now-empty rules file: $f"
                 rm -f "$f"
-                # Also remove from firewall-requests-updated if it exists there
-                fname=$(basename "$f")
-                rm -f "firewall-requests-updated/$fname" || true
               fi
             fi
           done
 
-          # Copy everything back to working dir
+          # Copy all updated files back to main working dir
           cp firewall-requests-updated/*.auto.tfvars.json firewall-requests/ 2>/dev/null || true
 
-          # Show diffs
           echo "=== FILES AFTER ==="
           ls -l firewall-requests/*.auto.tfvars.json || true
           for f in firewall-requests/*.auto.tfvars.json; do
