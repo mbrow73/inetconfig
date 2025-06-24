@@ -4,35 +4,48 @@ import json
 BASE_PRIORITY = 1000
 PRIORITY_STEP = 1
 
-# Gather all rules from all tfvars files
-all_rules = []
-file_map = {}
-
+# Collect all rules, keep their file and original index
+rules = []
 for path in sorted(glob.glob("firewall-requests/*.auto.tfvars.json")):
     with open(path) as f:
         data = json.load(f)
-        for rule in data.get("auto_firewall_rules", []):
-            rule["_file"] = path
-            all_rules.append(rule)
+        for idx, rule in enumerate(data.get("auto_firewall_rules", [])):
+            rules.append({
+                "rule": rule,
+                "file": path,
+                "idx": idx
+            })
 
-# Sort all rules by name (or another stable field if desired)
-all_rules.sort(key=lambda r: r["name"])
+# Find duplicate priorities
+priority_to_rules = {}
+for i, entry in enumerate(rules):
+    prio = entry["rule"].get("priority")
+    if prio in priority_to_rules:
+        priority_to_rules[prio].append(i)
+    else:
+        priority_to_rules[prio] = [i]
 
-# Assign globally unique, gapless priorities
-for i, rule in enumerate(all_rules):
-    rule["priority"] = BASE_PRIORITY + i * PRIORITY_STEP
+# If all priorities are unique, exit without rewriting files
+has_dupes = any(len(idxs) > 1 for idxs in priority_to_rules.values())
+if not has_dupes:
+    print("No duplicate priorities detected. No normalization needed.")
+    exit(0)
 
-# Group back into their respective files
-files = {}
-for rule in all_rules:
-    path = rule["_file"]
-    rule.pop("_file", None)
-    files.setdefault(path, []).append(rule)
+# If there are duplicates, reassign unique, gapless priorities across all rules (preserving order)
+print("Duplicate priorities found! Normalizing...")
+for i, entry in enumerate(rules):
+    entry["rule"]["priority"] = BASE_PRIORITY + i * PRIORITY_STEP
 
-# Only rewrite files if anything changed, to avoid unnecessary commits
-for path, rules in files.items():
+# Write back updated rules to their respective files (preserving file and original order)
+file_map = {}
+for entry in rules:
+    file_map.setdefault(entry["file"], []).append(entry["rule"])
+
+for path, new_rules in file_map.items():
     with open(path, "r") as f:
-        orig = json.load(f).get("auto_firewall_rules", [])
-    if orig != rules:
+        orig_rules = json.load(f).get("auto_firewall_rules", [])
+    if orig_rules != new_rules:
         with open(path, "w") as f:
-            json.dump({"auto_firewall_rules": rules}, f, indent=2)
+            json.dump({"auto_firewall_rules": new_rules}, f, indent=2)
+        print(f"Updated: {path}")
+
