@@ -42,12 +42,12 @@ jobs:
           if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
           if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
 
-          # 3. Parse all rules
+          # 3. Parse all rules - new way, split with @@@ so we can loop over each rule
           RULES=$(echo "$ISSUE_BODY_CLEAN" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
               if(rule){
-                print rule_block "\n@@@"
+                print rule_block "@@@"
               }
               rule_block = ""
               rule=1
@@ -60,16 +60,16 @@ jobs:
             }
             END{
               if(rule){
-                print rule_block
+                print rule_block "@@@"
               }
             }
           ')
           echo "=== RULES PARSED ==="
           echo "$RULES"
 
-          # 4. Parse update instructions to intermediate file
+          # 4. Parse update instructions, one per rule
           cat > update_script.awk <<'EOS'
-          BEGIN{FS=": ";OFS=": "; }
+          BEGIN{FS=": ";OFS=": ";}
           function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
           {
             if ($1 ~ /Existing Rule Name/) rulename=trim($2)
@@ -80,19 +80,15 @@ jobs:
             else if ($1 ~ /New Protocol/) proto=trim($2)
             else if ($1 ~ /New Direction/) dir=trim($2)
             else if ($1 ~ /New Business Justification/) just=trim($2)
-            else if ($1 ~ /#### Rule/) {
-              if(rulename && action) {
-                print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
-              }
-              rulename=action=src=dst=ports=proto=dir=just=""
-            }
           }
           END{
-            if(rulename && action) print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
+            if(rulename && action)
+              print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
           }
           EOS
 
-          echo "$RULES" | awk -f update_script.awk > update_instructions.txt
+          # Instead of awk default record separator, use @@@ so each rule is parsed as a block!
+          echo "$RULES" | awk -v RS="@@@" -f update_script.awk | grep . > update_instructions.txt
           echo "=== UPDATE INSTRUCTIONS ==="
           cat update_instructions.txt
 
