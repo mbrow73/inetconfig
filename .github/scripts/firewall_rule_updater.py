@@ -117,9 +117,10 @@ def main():
     rule_blocks = parse_blocks(issue_body)
     updates = []
     for idx, block in enumerate(rule_blocks, 1):
-        # Robustly match current rule name (ignore bullet, whitespace, etc)
         m_name = re.search(r"Current Rule Name.*?:\s*([^\n]+)", block, re.IGNORECASE)
-        rule_name = m_name.group(1).strip() if m_name else None
+        rule_name = m_name.group(1) if m_name else None
+        if rule_name:
+            rule_name = rule_name.strip().lstrip("*").strip().lstrip(":").strip()
         if not rule_name:
             errors.append(f"Rule {idx}: 'Current Rule Name' is required.")
             continue
@@ -142,8 +143,11 @@ def main():
 
     # Load all rules and file paths
     rule_map, file_map = load_all_rules()
-    rules_to_write = {}  # filename -> list of rules
-    updated_rule_names = set()
+    # Track for each file: list of (orig_rule_name, updated_rule or None)
+    rules_update_map = {}  # file -> {old_rule_name: updated_rule_obj or None}
+    updates_by_file = {}   # file -> list of updates for that file
+
+    # Map updates to rules and files
     for update in updates:
         idx = update["idx"]
         rule_name = update["rule_name"]
@@ -152,47 +156,59 @@ def main():
             continue
         rule = rule_map[rule_name]
         old_file = file_map[rule_name]
-        # Remove rule from old file for update
-        if old_file not in rules_to_write:
-            with open(old_file) as f:
-                data = json.load(f)
-            rules_to_write[old_file] = [r for r in data.get("auto_firewall_rules", []) if r["name"] != rule_name]
-        else:
-            rules_to_write[old_file] = [r for r in rules_to_write[old_file] if r["name"] != rule_name]
-        # Prepare update dict
-        new_fields = {}
-        if update["src_ip_ranges"]: new_fields["src_ip_ranges"] = update["src_ip_ranges"]
-        if update["dest_ip_ranges"]: new_fields["dest_ip_ranges"] = update["dest_ip_ranges"]
-        if update["ports"]: new_fields["ports"] = update["ports"]
-        if update["protocol"]: new_fields["protocol"] = update["protocol"]
-        if update["direction"]: new_fields["direction"] = update["direction"]
-        if update["description"]: new_fields["description"] = update["description"]
-        new_carid = update["carid"]
-        # Apply changes
-        rule = update_rule_fields(rule, new_fields, new_reqid, new_carid)
-        rule_errors = validate_rule(rule, idx=idx)
-        if rule_errors: errors.extend(rule_errors)
-        updated_rule_names.add(rule["name"])
-        rules_to_write.setdefault(old_file, []).append(rule)
+        updates_by_file.setdefault(old_file, []).append((rule_name, update))
+
+    # Build final rules for each file, preserving original order
+    for file_path, file_updates in updates_by_file.items():
+        # Load original file content and order
+        with open(file_path) as f:
+            original_data = json.load(f)
+        original_rule_list = original_data.get("auto_firewall_rules", [])
+
+        # Build a dict of rule_name -> update
+        updates_dict = {ru[0]: ru[1] for ru in file_updates}
+
+        # Track new rules after update
+        new_rule_list = []
+        updated_names = set()
+
+        for orig_rule in original_rule_list:
+            old_name = orig_rule["name"]
+            if old_name in updates_dict:
+                upd = updates_dict[old_name]
+                # Prepare update dict
+                new_fields = {}
+                if upd["src_ip_ranges"]: new_fields["src_ip_ranges"] = upd["src_ip_ranges"]
+                if upd["dest_ip_ranges"]: new_fields["dest_ip_ranges"] = upd["dest_ip_ranges"]
+                if upd["ports"]: new_fields["ports"] = upd["ports"]
+                if upd["protocol"]: new_fields["protocol"] = upd["protocol"]
+                if upd["direction"]: new_fields["direction"] = upd["direction"]
+                if upd["description"]: new_fields["description"] = upd["description"]
+                new_carid = upd["carid"]
+                # Apply changes
+                rule = update_rule_fields(orig_rule.copy(), new_fields, new_reqid, new_carid)
+                rule_errors = validate_rule(rule, idx=upd["idx"])
+                if rule_errors: errors.extend(rule_errors)
+                new_rule_list.append(rule)
+                updated_names.add(old_name)
+            else:
+                # Not updated, keep original
+                new_rule_list.append(orig_rule)
 
     # If no errors, handle file renaming if needed
-    if not errors:
-        for old_file, rules in rules_to_write.items():
-            if not rules:
-                os.remove(old_file)
-                continue
+        if not errors:
             # If file doesn't already have new REQID, rename
-            filename_reqs = re.findall(r"REQ\d{7,8}", old_file)
+            filename_reqs = re.findall(r"REQ\d{7,8}", file_path)
             if new_reqid and (not filename_reqs or new_reqid not in filename_reqs):
                 new_name = new_reqid + "-" + "-".join(filename_reqs) + ".auto.tfvars.json"
-                new_path = os.path.join(os.path.dirname(old_file), new_name)
+                new_path = os.path.join(os.path.dirname(file_path), new_name)
                 with open(new_path, "w") as f:
-                    json.dump({"auto_firewall_rules": rules}, f, indent=2)
-                if os.path.abspath(old_file) != os.path.abspath(new_path):
-                    os.remove(old_file)
+                    json.dump({"auto_firewall_rules": new_rule_list}, f, indent=2)
+                if os.path.abspath(file_path) != os.path.abspath(new_path):
+                    os.remove(file_path)
             else:
-                with open(old_file, "w") as f:
-                    json.dump({"auto_firewall_rules": rules}, f, indent=2)
+                with open(file_path, "w") as f:
+                    json.dump({"auto_firewall_rules": new_rule_list}, f, indent=2)
 
     if errors:
         print("VALIDATION_ERRORS_START")
