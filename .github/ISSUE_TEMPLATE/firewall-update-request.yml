@@ -1,0 +1,42 @@
+name: "Firewall Rule Update Request"
+description: "Request an update to an existing firewall rule."
+labels: ["firewall-update-request"]
+body:
+  - type: input
+    id: request_id
+    attributes:
+      label: "Request ID (REQID)"
+      description: "Unique REQID for this change request."
+      placeholder: "REQ12345"
+    validations:
+      required: true
+
+  - type: input
+    id: carid
+    attributes:
+      label: "CARID"
+      description: "Application/Team/Change ID."
+      placeholder: "APP001"
+    validations:
+      required: true
+
+  - type: textarea
+    id: rules
+    attributes:
+      label: "Rules to Update"
+      description: |
+        List each rule you want to update in the format below.  
+        Only include the fields you want to change; leave the others blank.  
+        (Copy/paste and repeat the block for multiple rules.)
+
+        ```
+        Existing Rule Name: AUTO-REQ99999-APP001-TCP-443-1
+        New Source IP(s): 203.0.113.5/32
+        New Destination IP(s):
+        New Port(s): 443
+        New Protocol:
+        New Direction:
+        New Business Justification:
+        ```
+    validations:
+      required: true
