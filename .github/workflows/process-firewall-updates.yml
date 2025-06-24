@@ -18,10 +18,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: 🔎 Validate & Apply Rule Updates
         shell: bash
         run: |
@@ -44,5 +46,41 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Add steps for PR creation just as in your "add" workflow,
-      # using the updated files in firewall-requests/
+
+      - name: ⬆️ Commit and push rule updates (auto branch)
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "[Firewall Automation] Update firewall rule(s) for #${{ github.event.issue.number }}"
+          branch: firewall/update-${{ github.event.issue.number }}
+          file_pattern: "firewall-requests/*.auto.tfvars.json"
+
+      - name: ⏫ Create or Update Pull Request for NetSec
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: |
+            [Firewall Automation] Update firewall rule(s) for #${{ github.event.issue.number }}
+          branch: firewall/update-${{ github.event.issue.number }}
+          title: "Firewall rule update request (Issue #${{ github.event.issue.number }})"
+          body: |
+            **Automated update of firewall rule(s).**
+
+            _See the updated file(s) in `firewall-requests/` for details._
+
+            Related Issue: #${{ github.event.issue.number }}
+          add-paths: |
+            firewall-requests/*.auto.tfvars.json
+          base: main
+
+      - name: 💬 Comment PR Link to Issue
+        if: steps.cpr.outputs.pull-request-url != ''
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
+            })
