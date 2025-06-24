@@ -11,16 +11,17 @@ permissions:
 
 jobs:
   process:
-    runs-on: ubuntu-latest
     if: contains(github.event.issue.labels.*.name, 'firewall-update-request')
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: ⬇️ Checkout repo
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Process Firewall Rule Update/Removal Request
+      - name: 📝 Parse Issue and Update/Move/Remove Rules
+        id: process
         shell: bash
         run: |
           set -e
@@ -41,7 +42,7 @@ jobs:
           if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
           if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
 
-          # 3. Parse all rules (handle multiple blocks with delimiter)
+          # 3. Parse all rules
           RULES=$(echo "$ISSUE_BODY_CLEAN" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
@@ -110,7 +111,6 @@ jobs:
           cp firewall-requests/*.auto.tfvars.json firewall-requests-updated/ 2>/dev/null || true
 
           while IFS= read -r inst; do
-            [ -z "$inst" ] && continue
             IFS='|' read -r existing_rulename action src dst ports proto dir just <<< "$inst"
             existing_rulename=$(echo "$existing_rulename" | xargs)
             action=$(echo "$action" | xargs)
@@ -187,7 +187,7 @@ jobs:
           # Copy everything back to working dir
           cp firewall-requests-updated/*.auto.tfvars.json firewall-requests/
 
-          # Show diffs (for debugging/logging)
+          # Show diffs
           echo "=== FILES AFTER ==="
           ls -l firewall-requests/*.auto.tfvars.json
           for f in firewall-requests/*.auto.tfvars.json; do
@@ -195,14 +195,41 @@ jobs:
             cat "$f"
           done
 
-          # Export for PR step if you want to use this downstream
+          # Export for PR step
           echo "REQID=$REQID" >> $GITHUB_ENV
 
-      # (Optionally, add a step to commit+PR these changes, or trigger Terraform apply)
-      # - name: Create Pull Request
-      #   uses: peter-evans/create-pull-request@v6
-      #   with:
-      #     commit-message: "Update firewall rule(s) via GitHub Issue"
-      #     branch: update/${{ env.REQID }}
-      #     title: "Firewall rule change for ${{ env.REQID }}"
-      #     body: "Automated update/removal of firewall rule(s) for request ${{ env.REQID }}."
+      - name: ⏫ Create or Update Pull Request for NetSec
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: |
+            [Firewall Automation] Update/remove rules for ${{ env.REQID }}
+          branch: firewall/${{ env.REQID }}-update-${{ github.event.issue.number }}
+          title: "Firewall update/removal: ${{ env.REQID }} (Issue #${{ github.event.issue.number }})"
+          body: |
+            Automated firewall rule update/removal for REQID `${{ env.REQID }}`.
+
+            **Summary:**
+            - Source: ${{ github.event.issue.user.login }}
+            - Related Issue: #${{ github.event.issue.number }}
+
+            **Rules:**  
+            _See the file `firewall-requests/${{ env.REQID }}.auto.tfvars.json` for full details._
+
+            > **NetSec:** Please review and merge if approved.  
+          add-paths: |
+            firewall-requests/*.auto.tfvars.json
+          base: main
+
+      - name: 💬 Comment PR Link to Issue
+        if: steps.cpr.outputs.pull-request-url != ''
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
+            })
