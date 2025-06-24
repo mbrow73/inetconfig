@@ -1,8 +1,10 @@
 ---
-name: "Firewall Rule Update/Removal Request"
-about: "Request an update or removal of existing firewall rule(s)."
+name: 🔄 Firewall Rule Update/Removal Request
+about: Request an update or removal of existing firewall rule(s)
+title: "[Firewall Rule Change]"
 labels: ["firewall-update-request"]
 ---
+
 <!--
 Instructions:
 
@@ -10,20 +12,21 @@ Instructions:
 - To **remove** a rule: Only "Existing Rule Name" and "Action" (set to `remove`) are required; leave other fields blank.
 - To **update multiple rules**, copy/paste the block below and fill for each rule.
 
-Example: update source ip
+Example: update source IP
 #### Rule 1
-🔹 Existing Rule Name: <rule name here>
+🔹 Existing Rule Name: AUTO-REQ123123-123123-TCP-443-1
 🔹 Action: update
 🔹 New Source IP(s) or CIDR(s): 192.168.1.1/32
-🔹 New Destination IP(s) or CIDR(s):
-🔹 New Port(s):
-🔹 New Protocol:
-🔹 New Direction:
-🔹 New Business Justification:
+🔹 New Destination IP(s) or CIDR(s): 
+🔹 New Port(s): 
+🔹 New Protocol: 
+🔹 New Direction: 
+🔹 New Business Justification: Updated source IP
 -->
 
-### Request ID (REQID): 
-### CARID: 
+### Request ID (REQID):
+
+### CARID:
 
 #### Rule 1
 🔹 Existing Rule Name: 
