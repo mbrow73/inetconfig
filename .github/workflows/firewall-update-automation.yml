@@ -34,7 +34,7 @@ jobs:
           echo "=== CLEANED ISSUE BODY ==="
           echo "$ISSUE_BODY_CLEAN"
 
-          # 2. Parse out new REQID and CARID
+          # 2. Parse out new REQID (where rule should end up after update)
           REQID=$(echo "$ISSUE_BODY_CLEAN" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
           CARID=$(echo "$ISSUE_BODY_CLEAN" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
           echo "REQID: $REQID"
@@ -67,7 +67,7 @@ jobs:
           echo "=== RULES PARSED ==="
           echo "$RULES"
 
-          # 4. Parse update instructions, one per rule (flush output for each rule block)
+          # 4. Parse update instructions, one per rule (FIXED AWK LOGIC)
           cat > update_script.awk <<'EOS'
           BEGIN{FS=": ";OFS=": ";}
           function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
@@ -82,44 +82,14 @@ jobs:
             else if ($1 ~ /New Business Justification/) just=trim($2)
           }
           ENDFILE{
-            # no-op for multi-block awk
-          }
-          {
-            # For each block (one rule), when record ends, print
-          }
-          END {
-            # handled by per-block output
-          }
-          {
-            # When end of record (after each rule block):
-            if (NR==FNR && rulename && action) {
+            if(rulename && action)
               print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
-              rulename=action=src=dst=ports=proto=dir=just=""
-            }
+            rulename=action=src=dst=ports=proto=dir=just=""
           }
           EOS
 
-          # Use @@@ as record separator, flush per block with awk
-          echo "$RULES" | awk -v RS="@@@" '
-            BEGIN{FS=": ";OFS=": ";}
-            function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
-            {
-              split("", out)
-              rulename=action=src=dst=ports=proto=dir=just=""
-              for(i=1;i<=NF;i++) {
-                if ($i ~ /Existing Rule Name/) rulename=trim($(i+1))
-                else if ($i ~ /Action/) action=trim($(i+1))
-                else if ($i ~ /New Source/) src=trim($(i+1))
-                else if ($i ~ /New Destination/) dst=trim($(i+1))
-                else if ($i ~ /New Port/) ports=trim($(i+1))
-                else if ($i ~ /New Protocol/) proto=trim($(i+1))
-                else if ($i ~ /New Direction/) dir=trim($(i+1))
-                else if ($i ~ /New Business Justification/) just=trim($(i+1))
-              }
-              if(rulename && action) print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
-            }
-          ' | grep . > update_instructions.txt
-
+          # Instead of awk default record separator, use @@@ so each rule is parsed as a block!
+          echo "$RULES" | awk -v RS="@@@" -f update_script.awk | grep . > update_instructions.txt
           echo "=== UPDATE INSTRUCTIONS ==="
           cat update_instructions.txt
 
@@ -210,6 +180,14 @@ jobs:
             rule_to_file["$new_rulename"]="$new_file"
 
           done < update_instructions.txt
+
+          # 🗑️ Remove any .auto.tfvars.json files that now have no rules left
+          for f in firewall-requests-updated/*.auto.tfvars.json; do
+            if [ "$(jq '.auto_firewall_rules | length' "$f")" -eq 0 ]; then
+              echo "Deleting empty file: $f"
+              rm -f "$f"
+            fi
+          done
 
           # Copy everything back to working dir
           cp firewall-requests-updated/*.auto.tfvars.json firewall-requests/
