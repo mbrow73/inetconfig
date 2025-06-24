@@ -128,7 +128,10 @@ jobs:
             **Rules:**  
             _See the file `firewall-requests/${{ steps.parse_and_write.outputs.REQID }}.auto.tfvars.json` for full details._
 
-            > **NetSec:** Please review and merge if approved.  
+            > **NetSec:** Please review and merge if approved.
+
+            Closes #${{ github.event.issue.number }}
+
           add-paths: |
             firewall-requests/${{ steps.parse_and_write.outputs.REQID }}.auto.tfvars.json
           base: main
