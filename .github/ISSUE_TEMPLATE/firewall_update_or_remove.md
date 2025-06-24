@@ -5,32 +5,23 @@ title: "[Firewall Rule Change]"
 labels: ["firewall-update-request"]
 ---
 
-<!--
-Instructions:
-
-- To **update** a rule: Only fill in the fields you wish to update. Leave others blank.
-- To **remove** a rule: Only "Existing Rule Name" and "Action" (set to `remove`) are required; leave other fields blank.
-- To **update multiple rules**, copy/paste the block below and fill for each rule.
-
-Example: update source IP
-#### Rule 1
-🔹 Existing Rule Name: AUTO-REQ123123-123123-TCP-443-1
-🔹 Action: update
-🔹 New Source IP(s) or CIDR(s): 192.168.1.1/32
-🔹 New Destination IP(s) or CIDR(s): 
-🔹 New Port(s): 
-🔹 New Protocol: 
-🔹 New Direction: 
-🔹 New Business Justification: Updated source IP
--->
-
 ### Request ID (REQID):
 
 ### CARID:
 
 #### Rule 1
-🔹 Existing Rule Name: 
-🔹 Action: 
+🔹 Existing Rule Name: AUTO-REQ123123-123123-TCP-443-1
+🔹 Action: update
+🔹 New Source IP(s) or CIDR(s): 
+🔹 New Destination IP(s) or CIDR(s): 
+🔹 New Port(s): 8443
+🔹 New Protocol: 
+🔹 New Direction: 
+🔹 New Business Justification: 
+
+#### Rule 2
+🔹 Existing Rule Name: AUTO-REQ123123-123123-TCP-443-1
+🔹 Action: remove
 🔹 New Source IP(s) or CIDR(s): 
 🔹 New Destination IP(s) or CIDR(s): 
 🔹 New Port(s): 
