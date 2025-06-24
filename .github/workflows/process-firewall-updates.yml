@@ -47,6 +47,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 📋 Prepare Rule Update Summary for PR
+        id: summary
+        run: |
+          if [ -f rule_update_summary.txt ]; then
+            echo "RULE_UPDATE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
+            cat rule_update_summary.txt >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "RULE_UPDATE_SUMMARY=No rule updates found." >> $GITHUB_OUTPUT
+          fi
+
       - name: ⏫ Create or Update Pull Request for NetSec
         id: cpr
         uses: peter-evans/create-pull-request@v6
@@ -56,7 +67,8 @@ jobs:
           branch: firewall/update-${{ github.event.issue.number }}
           title: "Firewall rule update request (Issue #${{ github.event.issue.number }})"
           body: |
-            **Automated update of firewall rule(s).**
+            **Rule Updates:**
+            ${{ steps.summary.outputs.RULE_UPDATE_SUMMARY }}
 
             _See the updated file(s) in `firewall-requests/` for details._
 
