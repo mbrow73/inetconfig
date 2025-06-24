@@ -42,7 +42,7 @@ jobs:
           if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
           if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
 
-          # 3. Parse all rules - new way, split with @@@ so we can loop over each rule
+          # 3. Parse all rules - split with @@@ so we can loop over each rule
           RULES=$(echo "$ISSUE_BODY_CLEAN" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
@@ -67,7 +67,7 @@ jobs:
           echo "=== RULES PARSED ==="
           echo "$RULES"
 
-          # 4. Parse update instructions, one per rule
+          # 4. Parse update instructions, one per rule (FIXED AWK LOGIC)
           cat > update_script.awk <<'EOS'
           BEGIN{FS=": ";OFS=": ";}
           function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
@@ -81,9 +81,10 @@ jobs:
             else if ($1 ~ /New Direction/) dir=trim($2)
             else if ($1 ~ /New Business Justification/) just=trim($2)
           }
-          END{
+          ENDFILE{
             if(rulename && action)
               print rulename "|" action "|" src "|" dst "|" ports "|" proto "|" dir "|" just
+            rulename=action=src=dst=ports=proto=dir=just=""
           }
           EOS
 
