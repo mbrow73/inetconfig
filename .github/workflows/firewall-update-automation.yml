@@ -1,4 +1,4 @@
-name: 🔄 Firewall Rule Update/Removal Request
+name: 🔄 Process Firewall Rule Update/Removal Requests
 
 on:
   issues:
@@ -20,8 +20,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: 📝 Parse & Apply Update/Remove/Move
-        id: update
+      - name: 📝 Parse Issue and Update/Move/Remove Rules
+        id: process
         shell: bash
         run: |
           set -e
@@ -69,7 +69,7 @@ jobs:
 
           # 4. Parse update instructions to intermediate file
           cat > update_script.awk <<'EOS'
-          BEGIN{FS=": ";OFS=": ";}
+          BEGIN{FS=": ";OFS=": "; }
           function trim(s) {gsub(/^[ \t]+|[ \t]+$/, "", s); return s;}
           {
             if ($1 ~ /Existing Rule Name/) rulename=trim($2)
@@ -101,10 +101,9 @@ jobs:
 
           declare -A rule_to_file
           for f in firewall-requests/*.auto.tfvars.json; do
-            jq -c '.auto_firewall_rules[]' "$f" | while read -r rule; do
-              rulename=$(echo "$rule" | jq -r '.name')
+            while read -r rulename; do
               rule_to_file["$rulename"]="$f"
-            done
+            done < <(jq -r '.auto_firewall_rules[].name' "$f")
           done
 
           # Make a temp dir for new files
@@ -154,8 +153,7 @@ jobs:
             # If update, possibly move to new file and change rule name
             new_rulename=$existing_rulename
             if [ "$REQID" != "$old_reqid" ]; then
-              # Change rule name to use new REQID and current CARID
-              # Preserving rest of naming convention (TCP, port, etc)
+              # Change rule name to use new REQID and current CARID (rest of naming preserved)
               new_rulename=$(echo "$existing_rulename" | sed "s/$old_reqid/$REQID/")
               new_file="firewall-requests-updated/${REQID}.auto.tfvars.json"
             else
@@ -218,7 +216,7 @@ jobs:
             **Rules:**  
             _See the file `firewall-requests/${{ env.REQID }}.auto.tfvars.json` for full details._
 
-            > **NetSec:** Please review and merge if approved.
+            > **NetSec:** Please review and merge if approved.  
           add-paths: |
             firewall-requests/*.auto.tfvars.json
           base: main
