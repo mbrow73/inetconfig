@@ -16,7 +16,7 @@ How to use:
 ### New Request ID (REQID): <!-- e.g. REQ2345678 -->
 
 #### Rule 1
-**Current Rule Name:**  
+**Current Rule Name**: 
 <!-- e.g. AUTO-REQ1234567-123456789-TCP-443-1 -->
 
 **New Source IP(s) or CIDR(s)** (optional):  
@@ -28,7 +28,7 @@ How to use:
 **New Business Justification** (optional):  
 
 #### Rule 2
-**Current Rule Name:**  
+**Current Rule Name**:
 **New Source IP(s) or CIDR(s)** (optional):  
 **New Destination IP(s) or CIDR(s)** (optional):  
 **New Port(s)** (optional):  
