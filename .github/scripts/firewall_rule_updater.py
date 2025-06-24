@@ -1,3 +1,6 @@
+Update script
+script
+
 import re
 import sys
 import os
@@ -90,38 +93,13 @@ def parse_blocks(issue_body):
     blocks = re.split(r"(?:^|\n)#{0,6}\s*Rule\s*\d+\s*\n", issue_body, flags=re.IGNORECASE)
     return [b for b in blocks[1:] if b.strip()]
 
-def make_update_summary(idx, rule_name, old_rule, updates, new_rule):
-    changes = []
-    # Compare each field and output old -> new if changed
-    for k, label in [
-        ("src_ip_ranges", "Source"),
-        ("dest_ip_ranges", "Destination"),
-        ("ports", "Ports"),
-        ("protocol", "Protocol"),
-        ("direction", "Direction"),
-        ("carid", "CARID"),
-        ("description", "Justification"),
-    ]:
-        old = old_rule.get(k)
-        new = updates.get(k) if updates.get(k) else None
-        if new is not None and old != new:
-            old_val = ','.join(old) if isinstance(old, list) else old
-            new_val = ','.join(new) if isinstance(new, list) else new
-            changes.append(f"{label}: `{old_val}` → `{new_val}`")
-    # Always show new rule name
-    if old_rule["name"] != new_rule["name"]:
-        changes.append(f"Rule Name: `{old_rule['name']}` → `{new_rule['name']}`")
-    if not changes:
-        changes = ["(No fields updated, only name/desc changed)"]
-    return f"- **Rule {idx}** (`{old_rule['name']}`): " + "; ".join(changes)
-
 def main():
+    # Accept issue body as single arg or from stdin
     if len(sys.argv) == 2:
         issue_body = sys.argv[1]
     else:
         issue_body = sys.stdin.read()
     errors = []
-    summaries = []
 
     # Parse new REQID
     m_reqid = re.search(r"New Request ID.*?:\s*([A-Z0-9]+)", issue_body, re.IGNORECASE)
@@ -191,9 +169,6 @@ def main():
                 rule_errors = validate_rule(updated_rule, idx=update["idx"])
                 if rule_errors: errors.extend(rule_errors)
                 new_rules.append(updated_rule)
-
-                # Build PR summary for this rule
-                summaries.append(make_update_summary(update["idx"], rule["name"], rule, update, updated_rule))
             else:
                 new_rules.append(rule)
 
@@ -209,12 +184,6 @@ def main():
             else:
                 with open(file, "w") as f:
                     json.dump({"auto_firewall_rules": new_rules}, f, indent=2)
-
-    if not errors:
-        # Write the PR summary
-        with open("rule_update_summary.txt", "w") as f:
-            for line in summaries:
-                f.write(line + "\n")
 
     if errors:
         print("VALIDATION_ERRORS_START")
