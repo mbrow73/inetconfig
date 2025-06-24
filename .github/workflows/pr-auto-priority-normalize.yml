@@ -6,6 +6,8 @@ on:
       - 'firewall-requests/*.auto.tfvars.json'
       - '.github/scripts/priority_normalizer.py'
     types: [opened, synchronize, reopened, edited]
+  repository_dispatch:
+    types: [normalize-priorities]
 
 permissions:
   contents: write
@@ -19,8 +21,7 @@ jobs:
       - name: ⬇️ Checkout code
         uses: actions/checkout@v4
         with:
-          # IMPORTANT: must checkout the PR branch, not main
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.head_ref || github.event.client_payload.ref || 'main' }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
@@ -42,5 +43,4 @@ jobs:
           skip_checkout: true
 
       - name: Show changes (for logs/debug)
-        run: |
-          git diff --stat || true
+        run: git diff --stat || true
