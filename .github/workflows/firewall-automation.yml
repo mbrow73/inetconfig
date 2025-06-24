@@ -20,7 +20,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: 📝 Parse Issue, Generate Per-REQID JSON
+      - name: 📝 Parse Issue, Generate Per-REQID JSON and Rule Summary
         id: parse_and_write
         shell: bash
         run: |
@@ -58,9 +58,10 @@ jobs:
             }
           ')
 
-          # Build JSON objects for each rule, trimming whitespace from all fields
+          # Build JSON objects for each rule, trimming whitespace from all fields,
+          # and build a summary for each rule for PR body.
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" '
-            BEGIN{RS="@@@"}
+            BEGIN{RS="@@@"; summary=""}
             NF{
               src=""; dst=""; ports=""; proto=""; dir=""; just="";
               n=split($0, lines, "\n");
@@ -88,14 +89,25 @@ jobs:
               rulename = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR);
               desc = rulename " | " just;
               printf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}\n",
-                rulename, desc, dir, src, dst, ports, tolower(proto), 1000+NR)
+                rulename, desc, dir, src, dst, ports, tolower(proto), 1000+NR) >> "rules.json"
+
+              # Build summary for PR
+              rule_flow = sprintf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n",
+                NR, src, dst, tolower(proto), ports, dir, just);
+              print rule_flow >> "rules_summary.txt"
             }
-          ' > rules.json
+          '
 
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\": [${RULES_JSON}]}"
           mkdir -p firewall-requests
           echo "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
+
+          SUMMARY=$(cat rules_summary.txt)
+          # Use workflow output for use in next step
+          echo "RULE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
+          echo "$SUMMARY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: ⏫ Create or Update Pull Request for NetSec
         id: cpr
@@ -106,7 +118,8 @@ jobs:
           branch: firewall/${{ steps.parse_and_write.outputs.REQID }}-${{ github.event.issue.number }}
           title: "Firewall request: ${{ steps.parse_and_write.outputs.REQID }} (Issue #${{ github.event.issue.number }})"
           body: |
-            Automated firewall rules for REQID `${{ steps.parse_and_write.outputs.REQID }}`.
+            **Rule Flow Summary:**
+            ${{ steps.parse_and_write.outputs.RULE_SUMMARY }}
 
             **Summary:**
             - Source: ${{ github.event.issue.user.login }}
