@@ -47,13 +47,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: ⬆️ Commit and push rule updates (auto branch)
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "[Firewall Automation] Update firewall rule(s) for #${{ github.event.issue.number }}"
-          branch: firewall/update-${{ github.event.issue.number }}
-          file_pattern: "firewall-requests/*.auto.tfvars.json"
-
       - name: ⏫ Create or Update Pull Request for NetSec
         id: cpr
         uses: peter-evans/create-pull-request@v6
