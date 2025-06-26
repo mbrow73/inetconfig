@@ -116,14 +116,15 @@ jobs:
               gsub(/^ +| +$/, "", dir)
               gsub(/^ +| +$/, "", just)
 
-              # assign priority and output JSON
+              # assign priority and build JSON string
               prio = get_next_priority()
               name = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR)
               desc = name " | " just
-              printf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}\n", name, desc, dir, src, dst, ports, tolower(proto), prio) >> rules.json
+              json = sprintf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}", name, desc, dir, src, dst, ports, tolower(proto), prio)
+              print json >> "rules.json"
 
               # summary for PR
-              printf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n", NR, src, dst, tolower(proto), ports, dir, just) >> rules_summary.txt
+              printf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n", NR, src, dst, tolower(proto), ports, dir, just) >> "rules_summary.txt"
             }
           ' existing_priorities.txt
 
