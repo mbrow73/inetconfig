@@ -51,7 +51,10 @@ jobs:
           else
             MAX=999
           fi
-          echo "MAX_PRIORITY=$MAX" >> $GITHUB_OUTPUT
+          # emit using the multi-line EOF syntax so the runner accepts it
+          echo "MAX_PRIORITY<<EOF" >> $GITHUB_OUTPUT
+          echo "$MAX"           >> $GITHUB_OUTPUT
+          echo "EOF"            >> $GITHUB_OUTPUT
 
       - name: 📝 Parse Issue, Generate Per-REQID JSON and Rule Summary
         id: parse_and_write
@@ -66,7 +69,7 @@ jobs:
 
           MAX_PRIORITY=${{ steps.max_priority.outputs.MAX_PRIORITY }}
 
-          # Split out each #### Rule block
+          # split out each #### Rule block
           RULES=$(echo "$ISSUE_BODY" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
@@ -77,7 +80,7 @@ jobs:
             END{ if(rule) print rule_block }
           ')
 
-          # Build JSON and summary
+          # generate JSON + summary
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v maxp="$MAX_PRIORITY" '
             BEGIN{RS="@@@";}
             NF{
@@ -113,8 +116,8 @@ jobs:
 
           SUMMARY=$(cat rules_summary.txt)
           echo "RULE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
-          echo "$SUMMARY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "$SUMMARY"       >> $GITHUB_OUTPUT
+          echo "EOF"            >> $GITHUB_OUTPUT
 
       - name: ⏫ Create or Update Pull Request for NetSec
         id: cpr
@@ -154,3 +157,4 @@ jobs:
               repo: context.repo.repo,
               body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
             })
+
