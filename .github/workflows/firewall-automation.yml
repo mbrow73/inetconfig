@@ -55,6 +55,18 @@ jobs:
           if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
           echo "REQID=$REQID" >> $GITHUB_OUTPUT
 
+          mkdir -p firewall-requests
+
+          # 🧠 Gather all existing priorities across all JSON files
+          EXISTING_PRIORITIES=$(find firewall-requests -name '*.auto.tfvars.json' -exec jq -r '.auto_firewall_rules[].priority' {} + 2>/dev/null | sort -n)
+          NEXT_PRIORITY=1000
+
+          # 📚 Build an associative array to mark used priorities
+          declare -A used
+          while read -r p; do
+            used["$p"]=1
+          done <<< "$EXISTING_PRIORITIES"
+
           # Extract rule blocks
           RULES=$(echo "$ISSUE_BODY" | awk '
             BEGIN{rule=0}
@@ -78,15 +90,22 @@ jobs:
             }
           ')
 
-          # Determine next available priority (start at 1000 if empty)
-          mkdir -p firewall-requests
-          HIGHEST_PRIORITY=$(jq -r '.auto_firewall_rules[].priority' firewall-requests/*.auto.tfvars.json 2>/dev/null | sort -nr | head -1)
-          START_PRIORITY=$(( (${HIGHEST_PRIORITY:-999}) + 1 ))
-
-          # Build JSON rules
-          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v baseprio="$START_PRIORITY" '
-            BEGIN{RS="@@@"; summary=""}
-            NF{
+          # Process rules with unique global priorities
+          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v nextprio="$NEXT_PRIORITY" '
+            BEGIN {
+              RS="@@@"
+              priority = nextprio
+              while ((getline line < "/dev/fd/3") > 0) {
+                used[line] = 1
+              }
+              close("/dev/fd/3")
+            }
+            function get_next_priority(  p) {
+              while (used[priority]) priority++
+              used[priority] = 1
+              return priority++
+            }
+            NF {
               src=""; dst=""; ports=""; proto=""; dir=""; just="";
               n=split($0, lines, "\n");
               for(i=1;i<=n;i++){
@@ -112,7 +131,7 @@ jobs:
               }
               rulename = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR);
               desc = rulename " | " just;
-              priority = baseprio + NR - 1;
+              priority = get_next_priority();
               printf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}\n",
                 rulename, desc, dir, src, dst, ports, tolower(proto), priority) >> "rules.json"
 
@@ -120,7 +139,7 @@ jobs:
                 NR, src, dst, tolower(proto), ports, dir, just);
               print rule_flow >> "rules_summary.txt"
             }
-          '
+          ' 3<<< "$EXISTING_PRIORITIES"
 
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\": [${RULES_JSON}]}"
