@@ -66,11 +66,15 @@ jobs:
           RAW_BODY="${{ github.event.issue.body }}"
           ISSUE_BODY="$(printf '%s' "$RAW_BODY" | tr -d $'\000-\037')"
 
-          REQID=$(printf '%s' "$ISSUE_BODY" \
-                   | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
+          # Extract and sanitize REQID so it contains only [A-Za-z0-9_-]
+          RAW_REQID=$(printf '%s' "$ISSUE_BODY" \
+                    | grep -i "Request ID" | head -1 | cut -d: -f2-)
+          REQID=$(printf '%s' "$RAW_REQID" | tr -d '[:space:]' | tr -cd '[:alnum:]\-_')
+          echo "REQID=$REQID" >> $GITHUB_OUTPUT
+
           CARID=$(printf '%s' "$ISSUE_BODY" \
                    | grep -i "CARID"     | head -1 | cut -d: -f2- | xargs)
-          echo "REQID=$REQID" >> $GITHUB_OUTPUT
+          echo "CARID=$CARID" >> $GITHUB_OUTPUT
 
           MAX_PRIORITY=${{ steps.max_priority.outputs.MAX_PRIORITY }}
 
@@ -185,5 +189,3 @@ jobs:
               repo: context.repo.repo,
               body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
             })
-
-
