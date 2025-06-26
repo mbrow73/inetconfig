@@ -71,23 +71,29 @@ jobs:
           for p in "${EXISTING_PRIORITIES[@]}"; do used[$p]=1; done
           nextprio=1000
 
-          # Split rules into blocks using awk
-          RULE_BLOCKS=()
-          IFS=$'\n@@@\n' read -r -d '' -a RULE_BLOCKS <<< "$(echo "$ISSUE_BODY" | awk '
+          # --- SPLIT RULE BLOCKS ---
+          # Each block will go in its own temp file for clean handling
+          rm -f /tmp/ruleblock_*.txt
+          echo "$ISSUE_BODY" | awk '
             BEGIN { rule=0 }
-            /^#### Rule/ { if(rule) print rule_block "\n@@@"; rule_block=""; rule=1; next }
-            { if(rule) rule_block=rule_block $0 "\n" }
+            /^#### Rule/ { if(rule) print rule_block "@@@"; rule_block=""; rule=1; next }
+            { if(rule) rule_block = rule_block $0 "\\n" }
             END { if(rule) print rule_block }
-          ')"
+          ' > ruleblocks.txt
+
+          # Save each block as a temp file
+          awk -v RS="@@@" 'NF {print > ("/tmp/ruleblock_" NR ".txt")}' ruleblocks.txt
 
           > rules.json
           > rules_summary.txt
           idx=0
 
-          for block in "${RULE_BLOCKS[@]}"; do
+          for rulefile in /tmp/ruleblock_*.txt; do
+            [ -f "$rulefile" ] || continue
+            block=$(cat "$rulefile")
             [[ -z "$(echo "$block" | tr -d '[:space:]')" ]] && continue
             idx=$((idx+1))
-            # extract each field
+
             src=$(echo "$block" | grep -i 'New Source' | cut -d: -f2- | xargs)
             dst=$(echo "$block" | grep -i 'New Destination' | cut -d: -f2- | xargs)
             ports=$(echo "$block" | grep -i 'New Port' | cut -d: -f2- | xargs)
@@ -165,3 +171,4 @@ jobs:
               repo: context.repo.repo,
               body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
             })
+
