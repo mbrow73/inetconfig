@@ -48,13 +48,10 @@ jobs:
         run: |
           mkdir -p firewall-requests
           if compgen -G "firewall-requests/*.auto.tfvars.json" > /dev/null; then
-            # Slurp all files into one array, then grab the single max
-            MAX=$(jq -s '[ .[].auto_firewall_rules[].priority ] | max' \
-                        firewall-requests/*.auto.tfvars.json)
+            MAX=$(jq -s '[ .[].auto_firewall_rules[].priority ] | max' firewall-requests/*.auto.tfvars.json)
           else
             MAX=999
           fi
-          # Emit as a multiline GITHUB_OUTPUT so the runner parses it correctly
           echo "MAX_PRIORITY<<EOF" >> $GITHUB_OUTPUT
           echo "$MAX"           >> $GITHUB_OUTPUT
           echo "EOF"            >> $GITHUB_OUTPUT
@@ -64,7 +61,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
           ISSUE_BODY="${{ github.event.issue.body }}"
           REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
           CARID=$(echo "$ISSUE_BODY" | grep -i "CARID"     | head -1 | cut -d: -f2- | xargs)
@@ -72,7 +68,7 @@ jobs:
 
           MAX_PRIORITY=${{ steps.max_priority.outputs.MAX_PRIORITY }}
 
-          # split out each #### Rule block
+          # split out the #### Rule blocks
           RULES=$(echo "$ISSUE_BODY" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
@@ -83,32 +79,27 @@ jobs:
             END{ if(rule) print rule_block }
           ')
 
-          # generate JSON + summary
+          # build JSON + summary
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v maxp="$MAX_PRIORITY" '
-            BEGIN{RS="@@@";}
-            NF{
+            BEGIN { RS="@@@"; }
+            NF {
               src=""; dst=""; ports=""; proto=""; dir=""; just="";
               n=split($0, lines, "\n");
               for(i=1;i<=n;i++){
-                if(lines[i] ~ /New Source/)       { sub(/.*: /, "", lines[i]); src=lines[i] }
-                if(lines[i] ~ /New Destination/)  { sub(/.*: /, "", lines[i]); dst=lines[i] }
-                if(lines[i] ~ /New Port/)         { sub(/.*: /, "", lines[i]); ports=lines[i] }
-                if(lines[i] ~ /New Protocol/)     { sub(/.*: /, "", lines[i]); proto=lines[i] }
-                if(lines[i] ~ /New Direction/)    { sub(/.*: /, "", lines[i]); dir=lines[i] }
-                if(lines[i] ~ /New Business Justification/) { sub(/.*: /, "", lines[i]); just=lines[i] }
+                if(lines[i] ~ /New Source/)       { sub(/.*: /,"",lines[i]); src=lines[i] }
+                if(lines[i] ~ /New Destination/)  { sub(/.*: /,"",lines[i]); dst=lines[i] }
+                if(lines[i] ~ /New Port/)         { sub(/.*: /,"",lines[i]); ports=lines[i] }
+                if(lines[i] ~ /New Protocol/)     { sub(/.*: /,"",lines[i]); proto=lines[i] }
+                if(lines[i] ~ /New Direction/)    { sub(/.*: /,"",lines[i]); dir=lines[i] }
+                if(lines[i] ~ /New Business Justification/) { sub(/.*: /,"",lines[i]); just=lines[i] }
               }
               rulename = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR);
-              desc = rulename " | " just;
-              printf(
-                "{\"name\":\"%s\",\"description\":\"%s\",\"direction\":\"%s\",\"src_ip_ranges\":[\"%s\"],\"dest_ip_ranges\":[\"%s\"],\"ports\":[\"%s\"],\"protocol\":\"%s\",\"priority\":%d,\"action\":\"allow\",\"enable_logging\":true}\n",
-                rulename, desc, dir, src, dst, ports, tolower(proto), maxp+NR
-              ) >> "rules.json"
-
-              rule_flow = sprintf(
-                "- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n",
-                NR, src, dst, tolower(proto), ports, dir, just
-              )
-              print rule_flow >> "rules_summary.txt"
+              desc     = rulename " | " just;
+              printf("{\"name\":\"%s\",\"description\":\"%s\",\"direction\":\"%s\",\"src_ip_ranges\":[\"%s\"],\"dest_ip_ranges\":[\"%s\"],\"ports\":[\"%s\"],\"protocol\":\"%s\",\"priority\":%d,\"action\":\"allow\",\"enable_logging\":true}\n", \
+                     rulename, desc, dir, src, dst, ports, tolower(proto), maxp+NR) >> "rules.json";
+              rule_flow = sprintf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n", \
+                                  NR, src, dst, tolower(proto), ports, dir, just);
+              print rule_flow >> "rules_summary.txt";
             }
           '
 
@@ -160,4 +151,5 @@ jobs:
               repo: context.repo.repo,
               body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
             })
+
 
