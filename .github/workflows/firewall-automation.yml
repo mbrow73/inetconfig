@@ -51,91 +51,84 @@ jobs:
           # Extract REQID and CARID
           REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
           CARID=$(echo "$ISSUE_BODY" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
-          if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
-          if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
+          [ -z "$REQID" ] && { echo "REQID not found"; exit 1; }
+          [ -z "$CARID" ] && { echo "CARID not found"; exit 1; }
           echo "REQID=$REQID" >> $GITHUB_OUTPUT
 
           mkdir -p firewall-requests
 
-          # Collect existing priorities from all request files
-          EXISTING_PRIORITIES=""
+          # Gather existing priorities
+          EXISTING_PRIORITIES=()
           for file in firewall-requests/*.auto.tfvars.json; do
-            if [ -f "$file" ]; then
-              PRIO_LIST=$(jq -r '.auto_firewall_rules[].priority' "$file" 2>/dev/null || true)
-              if [ -n "$PRIO_LIST" ]; then
-                EXISTING_PRIORITIES+=$'\n'$PRIO_LIST
-              fi
-            fi
+            [ -f "$file" ] || continue
+            mapfile -t PRIO_LIST < <(jq -r '.auto_firewall_rules[].priority' "$file" 2>/dev/null)
+            for p in "${PRIO_LIST[@]}"; do
+              [[ $p =~ ^[0-9]+$ ]] && EXISTING_PRIORITIES+=($p)
+            done
           done
-          EXISTING_PRIORITIES=$(echo "$EXISTING_PRIORITIES" | grep -E '^[0-9]+$' | sort -n | uniq)
-          echo "$EXISTING_PRIORITIES" > existing_priorities.txt
+          # remove duplicates and sort
+          EXISTING_PRIORITIES=($(printf "%s\n" "${EXISTING_PRIORITIES[@]}" | sort -nu))
+          declare -A used=()
+          for p in "${EXISTING_PRIORITIES[@]}"; do used[$p]=1; done
+          nextprio=1000
 
-          # Extract rule definitions from the issue body
-          RULES=$(echo "$ISSUE_BODY" | awk '
+          # Split out rules by block
+          BLOCKS=()
+          IFS=$'\n@@@\n' read -r -d '' -a BLOCKS <<< "$(echo "$ISSUE_BODY" | awk '
             BEGIN { rule=0 }
-            /^#### Rule/ {
-              if (rule) print rule_block "\n@@@"
-              rule_block=""
-              rule=1
-              next
-            }
-            { if (rule) rule_block=rule_block $0 "\n" }
-            END { if (rule) print rule_block }
-          ')
+            /^#### Rule/ { if(rule) print rule_block "\n@@@"; rule_block=""; rule=1; next }
+            { if(rule) rule_block=rule_block \$0 "\n" }
+            END { if(rule) print rule_block }
+          ' )"
 
-          # Build JSON entries and summary, assigning unique priorities
-          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" '
-            BEGIN {
-              RS="@@@"
-              nextprio=1000
-              while ((getline p < "existing_priorities.txt") > 0) used[p]=1
-            }
-            function get_next_priority() {
-              while (used[nextprio]) nextprio++
-              used[nextprio]=1
-              return nextprio++
-            }
-            NF {
-              # parse fields
-              src=""; dst=""; ports=""; proto=""; dir=""; just="";
-              n=split($0, lines, "\n");
-              for (i=1; i<=n; i++) {
-                line=lines[i]
-                if (line ~ /New Source/) { src=line; sub(/.*: /, "", src) }
-                if (line ~ /New Destination/) { dst=line; sub(/.*: /, "", dst) }
-                if (line ~ /New Port/) { ports=line; sub(/.*: /, "", ports) }
-                if (line ~ /New Protocol/) { proto=line; sub(/.*: /, "", proto) }
-                if (line ~ /New Direction/) { dir=line; sub(/.*: /, "", dir) }
-                if (line ~ /New Business Justification/) { just=line; sub(/.*: /, "", just) }
-              }
-              # trim whitespace
-              gsub(/^ +| +$/, "", src)
-              gsub(/^ +| +$/, "", dst)
-              gsub(/^ +| +$/, "", ports)
-              gsub(/^ +| +$/, "", proto)
-              gsub(/^ +| +$/, "", dir)
-              gsub(/^ +| +$/, "", just)
+          > rules.json
+          > rules_summary.txt
+          idx=0
 
-              # assign priority and build JSON string
-              prio = get_next_priority()
-              name = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR)
-              desc = name " | " just
-              json = sprintf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}", name, desc, dir, src, dst, ports, tolower(proto), prio)
-              print json >> "rules.json"
+          for block in "${BLOCKS[@]}"; do
+            # skip empty
+            if [[ -z "\$(echo "\$block" | tr -d '[:space:]')" ]]; then continue; fi
+            idx=\$((idx+1))
+            # parse each field
+            src=\$(echo "\$block" | grep -i 'New Source' | cut -d: -f2- | xargs)
+            dst=\$(echo "\$block" | grep -i 'New Destination' | cut -d: -f2- | xargs)
+            ports=\$(echo "\$block" | grep -i 'New Port' | cut -d: -f2- | xargs)
+            proto=\$(echo "\$block" | grep -i 'New Protocol' | cut -d: -f2- | xargs)
+            dir=\$(echo "\$block" | grep -i 'New Direction' | cut -d: -f2- | xargs)
+            just=\$(echo "\$block" | grep -i 'New Business Justification' | cut -d: -f2- | xargs)
 
-              # summary for PR
-              printf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n", NR, src, dst, tolower(proto), ports, dir, just) >> "rules_summary.txt"
-            }
-          ' existing_priorities.txt
+            # assign next free priority
+            while [[ \${used[\$nextprio]} ]]; do nextprio=\$((nextprio+1)); done
+            prio=\$nextprio; used[\$prio]=1; nextprio=\$((nextprio+1))
 
-          # write the tfvars file
-          RULES_JSON=$(paste -sd, rules.json)
-          echo "{\"auto_firewall_rules\": [${RULES_JSON}]}" | jq . > firewall-requests/${REQID}.auto.tfvars.json
+            # build names and JSON
+            name="AUTO-\${REQID}-\${CARID}-\${proto^^}-\${ports}-\${idx}"
+            desc="\${name} | \${just}"
+            jq -n \
+              --arg name "\$name" \
+              --arg desc "\$desc" \
+              --arg dir "\$dir" \
+              --arg src "\$src" \
+              --arg dst "\$dst" \
+              --arg ports "\$ports" \
+              --arg proto "\${proto,,}" \
+              --argjson prio \$prio \
+              '{name: \$name, description: \$desc, direction: \$dir, src_ip_ranges:[\$src], dest_ip_ranges:[\$dst], ports:[\$ports], protocol:\$proto, priority:\$prio, action:"allow", enable_logging:true}' \
+              >> rules.json
 
-          # output summary
-          echo "RULE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
-          cat rules_summary.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+            # append summary
+            printf "- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n" \
+              \$idx "\$src" "\$dst" "\${proto,,}" "\$ports" "\$dir" "\$just" >> rules_summary.txt
+          done
+
+          # write tfvars
+          RULES_JSON=\$(paste -sd, rules.json)
+          echo "{\"auto_firewall_rules\": [\${RULES_JSON}]}" | jq . > firewall-requests/\${REQID}.auto.tfvars.json
+
+          # set output summary
+          echo "RULE_SUMMARY<<EOF" >> \$GITHUB_OUTPUT
+          cat rules_summary.txt >> \$GITHUB_OUTPUT
+          echo "EOF" >> \$GITHUB_OUTPUT
 
       - name: ⏫ Create or Update Pull Request for NetSec
         id: cpr
