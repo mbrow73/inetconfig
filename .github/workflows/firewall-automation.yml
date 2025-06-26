@@ -33,7 +33,6 @@ jobs:
           python3 .github/scripts/firewall_request_validator.py issue.txt > validation_output.txt || VALIDATION_FAILED=1
           if [[ "$VALIDATION_FAILED" == "1" ]]; then
             ERRORS=$(awk '/VALIDATION_ERRORS_START/,/VALIDATION_ERRORS_END/' validation_output.txt | sed '/VALIDATION_ERRORS_START\|VALIDATION_ERRORS_END/d')
-            # Format errors as markdown bullets for readability
             gh issue comment ${{ github.event.issue.number }} --body $'### ❌ Firewall Request Validation Failed\n\n**Errors:**\n\n'"$(echo "$ERRORS" | sed 's/^/- /')"'\n\n_Your request was closed. Please correct the above and submit again._'
             gh issue close ${{ github.event.issue.number }}
             exit 1
@@ -79,7 +78,8 @@ jobs:
             }
           ')
 
-          # -- NEW LOGIC: Collect all existing priorities from all files
+          # >>>>>>>>>>>>>>> PRIORITY PATCH START <<<<<<<<<<<<<<<<
+          # Collect all used priorities from all .auto.tfvars.json files
           EXISTING_PRIORITIES=""
           for file in firewall-requests/*.auto.tfvars.json; do
             if [ -f "$file" ]; then
@@ -92,11 +92,12 @@ jobs:
           EXISTING_PRIORITIES=$(echo "$EXISTING_PRIORITIES" | grep -E '^[0-9]+$' | sort -n | uniq)
           echo "$EXISTING_PRIORITIES" > existing_priorities.txt
 
-          # Build JSON objects for each rule, assign unique priority, rest unchanged
+          # Build JSON objects for each rule, trimming whitespace from all fields,
+          # but patch in a global unique priority
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" '
             BEGIN {
               RS="@@@"
-              # Load existing priorities into an array "used"
+              # Read in all used priorities
               while ((getline line < "existing_priorities.txt") > 0) {
                 used[line] = 1
               }
@@ -143,6 +144,7 @@ jobs:
               print rule_flow >> "rules_summary.txt"
             }
           '
+          # >>>>>>>>>>>>>>> PRIORITY PATCH END <<<<<<<<<<<<<<<<
 
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\": [${RULES_JSON}]}"
