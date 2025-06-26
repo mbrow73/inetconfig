@@ -61,14 +61,20 @@ jobs:
         shell: bash
         run: |
           set -e
-          ISSUE_BODY="${{ github.event.issue.body }}"
-          REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
-          CARID=$(echo "$ISSUE_BODY" | grep -i "CARID"     | head -1 | cut -d: -f2- | xargs)
+
+          # strip all C0 controls (including CR, NUL, etc.) out of the issue body
+          RAW_BODY="${{ github.event.issue.body }}"
+          ISSUE_BODY="$(printf '%s' "$RAW_BODY" | tr -d $'\000-\037')"
+
+          REQID=$(printf '%s' "$ISSUE_BODY" \
+                   | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
+          CARID=$(printf '%s' "$ISSUE_BODY" \
+                   | grep -i "CARID"     | head -1 | cut -d: -f2- | xargs)
           echo "REQID=$REQID" >> $GITHUB_OUTPUT
 
           MAX_PRIORITY=${{ steps.max_priority.outputs.MAX_PRIORITY }}
 
-          # split out the #### Rule blocks
+          # split out each #### Rule block
           RULES=$(echo "$ISSUE_BODY" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
@@ -79,7 +85,7 @@ jobs:
             END{ if(rule) print rule_block }
           ')
 
-          # build JSON + summary, now trimming whitespace on each extracted field
+          # build JSON + summary, trimming whitespace on each field
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v maxp="$MAX_PRIORITY" '
             BEGIN { RS="@@@"; }
             NF {
@@ -129,8 +135,9 @@ jobs:
 
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\":[${RULES_JSON}]}"
+
           mkdir -p firewall-requests
-          echo "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
+          printf '%s' "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
 
           SUMMARY=$(cat rules_summary.txt)
           echo "RULE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
@@ -175,6 +182,7 @@ jobs:
               repo: context.repo.repo,
               body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
             })
+
 
 
 
