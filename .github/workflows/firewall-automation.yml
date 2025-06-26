@@ -48,111 +48,89 @@ jobs:
 
           ISSUE_BODY="${{ github.event.issue.body }}"
 
-          # Extract REQID and CARID (value after the colon)
+          # Extract REQID and CARID
           REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
           CARID=$(echo "$ISSUE_BODY" | grep -i "CARID" | head -1 | cut -d: -f2- | xargs)
           if [ -z "$REQID" ]; then echo "REQID not found"; exit 1; fi
           if [ -z "$CARID" ]; then echo "CARID not found"; exit 1; fi
           echo "REQID=$REQID" >> $GITHUB_OUTPUT
 
-          # Extract rules (one block per #### Rule N section)
-          RULES=$(echo "$ISSUE_BODY" | awk '
-            BEGIN{rule=0}
-            /^#### Rule/{
-              if(rule){
-                print rule_block "\n@@@"
-              }
-              rule_block = ""
-              rule=1
-              next
-            }
-            {
-              if(rule){
-                rule_block = rule_block $0 "\n"
-              }
-            }
-            END{
-              if(rule){
-                print rule_block
-              }
-            }
-          ')
+          mkdir -p firewall-requests
 
-          # >>>>>>>>>>>>>>> PRIORITY PATCH START <<<<<<<<<<<<<<<<
-          # Collect all used priorities from all .auto.tfvars.json files
-          EXISTING_PRIORITIES=""
+          # Gather all used priorities
+          EXISTING_PRIORITIES=()
           for file in firewall-requests/*.auto.tfvars.json; do
-            if [ -f "$file" ]; then
-              PRIOS=$(jq -r '.auto_firewall_rules[].priority' "$file" 2>/dev/null || true)
-              if [ -n "$PRIOS" ]; then
-                EXISTING_PRIORITIES+=$'\n'$PRIOS
-              fi
-            fi
+            [ -f "$file" ] || continue
+            mapfile -t PRIO_LIST < <(jq -r '.auto_firewall_rules[].priority' "$file" 2>/dev/null)
+            for p in "${PRIO_LIST[@]}"; do
+              [[ $p =~ ^[0-9]+$ ]] && EXISTING_PRIORITIES+=("$p")
+            done
           done
-          EXISTING_PRIORITIES=$(echo "$EXISTING_PRIORITIES" | grep -E '^[0-9]+$' | sort -n | uniq)
-          echo "$EXISTING_PRIORITIES" > existing_priorities.txt
+          EXISTING_PRIORITIES=($(printf "%s\n" "${EXISTING_PRIORITIES[@]}" | sort -nu))
+          declare -A used=()
+          for p in "${EXISTING_PRIORITIES[@]}"; do used[$p]=1; done
+          nextprio=1000
 
-          # Build JSON objects for each rule, trimming whitespace from all fields,
-          # but patch in a global unique priority
-          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" '
-            BEGIN {
-              RS="@@@"
-              # Read in all used priorities
-              while ((getline line < "existing_priorities.txt") > 0) {
-                used[line] = 1
+          # Extract rules (split by blocks)
+          RULES_RAW="$(
+            echo "$ISSUE_BODY" | awk '
+              BEGIN{rule=0}
+              /^#### Rule/{
+                if(rule){ print rule_block "\n@@@"; }
+                rule_block = ""
+                rule=1
+                next
               }
-              nextprio = 1000
-            }
-            function get_next_priority() {
-              while (used[nextprio]) nextprio++
-              used[nextprio]=1
-              return nextprio++
-            }
-            NF{
-              src=""; dst=""; ports=""; proto=""; dir=""; just="";
-              n=split($0, lines, "\n");
-              for(i=1;i<=n;i++){
-                line=lines[i];
-                if(line ~ /New Source/) {
-                  src=line; sub(/.*: /,"",src); gsub(/^[ \t]+|[ \t]+$/,"",src)
-                }
-                if(line ~ /New Destination/) {
-                  dst=line; sub(/.*: /,"",dst); gsub(/^[ \t]+|[ \t]+$/,"",dst)
-                }
-                if(line ~ /New Port/) {
-                  ports=line; sub(/.*: /,"",ports); gsub(/^[ \t]+|[ \t]+$/,"",ports)
-                }
-                if(line ~ /New Protocol/) {
-                  proto=line; sub(/.*: /,"",proto); gsub(/^[ \t]+|[ \t]+$/,"",proto)
-                }
-                if(line ~ /New Direction/) {
-                  dir=line; sub(/.*: /,"",dir); gsub(/^[ \t]+|[ \t]+$/,"",dir)
-                }
-                if(line ~ /New Business Justification/) {
-                  just=line; sub(/.*: /,"",just); gsub(/^[ \t]+|[ \t]+$/,"",just)
-                }
-              }
-              rulename = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR);
-              desc = rulename " | " just;
-              priority = get_next_priority();
-              printf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}\n",
-                rulename, desc, dir, src, dst, ports, tolower(proto), priority) >> "rules.json"
+              { if(rule){ rule_block = rule_block $0 "\n" } }
+              END{ if(rule){ print rule_block } }
+            '
+          )"
 
-              # Build summary for PR
-              rule_flow = sprintf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n",
-                NR, src, dst, tolower(proto), ports, dir, just);
-              print rule_flow >> "rules_summary.txt"
-            }
-          '
-          # >>>>>>>>>>>>>>> PRIORITY PATCH END <<<<<<<<<<<<<<<<
+          IFS=$'\n@@@\n' read -rd '' -a RULE_BLOCKS <<< "$RULES_RAW"
+
+          > rules.json
+          > rules_summary.txt
+
+          idx=0
+          for block in "${RULE_BLOCKS[@]}"; do
+            # skip empty
+            [[ -z "$(echo "$block" | tr -d '[:space:]')" ]] && continue
+            idx=$((idx+1))
+            src=$(echo "$block" | grep -i 'New Source' | cut -d: -f2- | xargs)
+            dst=$(echo "$block" | grep -i 'New Destination' | cut -d: -f2- | xargs)
+            ports=$(echo "$block" | grep -i 'New Port' | cut -d: -f2- | xargs)
+            proto=$(echo "$block" | grep -i 'New Protocol' | cut -d: -f2- | xargs)
+            dir=$(echo "$block" | grep -i 'New Direction' | cut -d: -f2- | xargs)
+            just=$(echo "$block" | grep -i 'New Business Justification' | cut -d: -f2- | xargs)
+
+            # assign next available global priority
+            while [[ ${used[$nextprio]+x} ]]; do nextprio=$((nextprio+1)); done
+            prio=$nextprio; used[$prio]=1; nextprio=$((nextprio+1))
+
+            name="AUTO-${REQID}-${CARID}-${proto^^}-${ports}-${idx}"
+            desc="${name} | ${just}"
+
+            jq -n \
+              --arg name "$name" \
+              --arg desc "$desc" \
+              --arg dir "$dir" \
+              --arg src "$src" \
+              --arg dst "$dst" \
+              --arg ports "$ports" \
+              --arg proto "${proto,,}" \
+              --argjson prio $prio \
+              '{name: $name, description: $desc, direction: $dir, src_ip_ranges:[$src], dest_ip_ranges:[$dst], ports:[$ports], protocol:$proto, priority:$prio, action:"allow", enable_logging:true}' \
+              >> rules.json
+
+            printf -- "- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n" \
+              "$idx" "$src" "$dst" "${proto,,}" "$ports" "$dir" "$just" >> rules_summary.txt
+          done
 
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\": [${RULES_JSON}]}"
-          mkdir -p firewall-requests
           echo "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
 
           SUMMARY=$(cat rules_summary.txt)
-          # Use workflow output for use in next step
           echo "RULE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
           echo "$SUMMARY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
