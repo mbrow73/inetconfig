@@ -101,28 +101,31 @@ jobs:
               n=split($0, lines, "\n");
               for (i=1; i<=n; i++) {
                 line=lines[i]
-                if (line ~ /New Source/) { sub(/.*: /, "", src=line) }
-                if (line ~ /New Destination/) { sub(/.*: /, "", dst=line) }
-                if (line ~ /New Port/) { sub(/.*: /, "", ports=line) }
-                if (line ~ /New Protocol/) { sub(/.*: /, "", proto=line) }
-                if (line ~ /New Direction/) { sub(/.*: /, "", dir=line) }
-                if (line ~ /New Business Justification/) { sub(/.*: /, "", just=line) }
+                if (line ~ /New Source/) { src=line; sub(/.*: /, "", src) }
+                if (line ~ /New Destination/) { dst=line; sub(/.*: /, "", dst) }
+                if (line ~ /New Port/) { ports=line; sub(/.*: /, "", ports) }
+                if (line ~ /New Protocol/) { proto=line; sub(/.*: /, "", proto) }
+                if (line ~ /New Direction/) { dir=line; sub(/.*: /, "", dir) }
+                if (line ~ /New Business Justification/) { just=line; sub(/.*: /, "", just) }
               }
               # trim whitespace
-              gsub(/^ +| +$/,"",src); gsub(/^ +| +$/,"",dst);
-              gsub(/^ +| +$/,"",ports); gsub(/^ +| +$/,"",proto);
-              gsub(/^ +| +$/,"",dir); gsub(/^ +| +$/,"",just);
+              gsub(/^ +| +$/, "", src)
+              gsub(/^ +| +$/, "", dst)
+              gsub(/^ +| +$/, "", ports)
+              gsub(/^ +| +$/, "", proto)
+              gsub(/^ +| +$/, "", dir)
+              gsub(/^ +| +$/, "", just)
 
               # assign priority and output JSON
-              prio=get_next_priority()
-              name=sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR)
-              desc=name " | " just
+              prio = get_next_priority()
+              name = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR)
+              desc = name " | " just
               printf("{\"name\": \"%s\", \"description\": \"%s\", \"direction\": \"%s\", \"src_ip_ranges\": [\"%s\"], \"dest_ip_ranges\": [\"%s\"], \"ports\": [\"%s\"], \"protocol\": \"%s\", \"priority\": %d, \"action\": \"allow\", \"enable_logging\": true}\n", name, desc, dir, src, dst, ports, tolower(proto), prio) >> rules.json
 
               # summary for PR
               printf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n", NR, src, dst, tolower(proto), ports, dir, just) >> rules_summary.txt
             }
-          '
+          ' existing_priorities.txt
 
           # write the tfvars file
           RULES_JSON=$(paste -sd, rules.json)
