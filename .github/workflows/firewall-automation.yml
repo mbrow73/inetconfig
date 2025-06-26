@@ -69,7 +69,10 @@ jobs:
           done
           EXISTING_PRIORITIES=$(echo "$EXISTING_PRIORITIES" | grep -E '^[0-9]+$' | sort -n)
 
-          # Store priorities in a bash map
+          # Store into temp file to avoid FD issues
+          echo "$EXISTING_PRIORITIES" > existing_priorities.txt
+
+          # Build Bash hash for used priorities
           declare -A used
           while read -r p; do
             used["$p"]=1
@@ -103,10 +106,9 @@ jobs:
             BEGIN {
               RS="@@@"
               nextprio = 1000
-              while ((getline line < "/dev/fd/3") > 0) {
+              while ((getline line < "existing_priorities.txt") > 0) {
                 used[line] = 1
               }
-              close("/dev/fd/3")
             }
             function get_next_priority(  p) {
               while (used[nextprio]) nextprio++
@@ -147,7 +149,7 @@ jobs:
                 NR, src, dst, tolower(proto), ports, dir, just);
               print rule_flow >> "rules_summary.txt"
             }
-          ' 3<<< "$EXISTING_PRIORITIES"
+          ' existing_priorities.txt
 
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\": [${RULES_JSON}]}"
