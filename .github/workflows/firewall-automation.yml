@@ -79,19 +79,43 @@ jobs:
             END{ if(rule) print rule_block }
           ')
 
-          # build JSON + summary
+          # build JSON + summary, now trimming whitespace on each extracted field
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v maxp="$MAX_PRIORITY" '
             BEGIN { RS="@@@"; }
             NF {
               src=""; dst=""; ports=""; proto=""; dir=""; just="";
               n=split($0, lines, "\n");
               for(i=1;i<=n;i++){
-                if(lines[i] ~ /New Source/)       { sub(/.*: /,"",lines[i]); src=lines[i] }
-                if(lines[i] ~ /New Destination/)  { sub(/.*: /,"",lines[i]); dst=lines[i] }
-                if(lines[i] ~ /New Port/)         { sub(/.*: /,"",lines[i]); ports=lines[i] }
-                if(lines[i] ~ /New Protocol/)     { sub(/.*: /,"",lines[i]); proto=lines[i] }
-                if(lines[i] ~ /New Direction/)    { sub(/.*: /,"",lines[i]); dir=lines[i] }
-                if(lines[i] ~ /New Business Justification/) { sub(/.*: /,"",lines[i]); just=lines[i] }
+                if(lines[i] ~ /New Source/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  src=lines[i];
+                }
+                if(lines[i] ~ /New Destination/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  dst=lines[i];
+                }
+                if(lines[i] ~ /New Port/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  ports=lines[i];
+                }
+                if(lines[i] ~ /New Protocol/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  proto=lines[i];
+                }
+                if(lines[i] ~ /New Direction/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  dir=lines[i];
+                }
+                if(lines[i] ~ /New Business Justification/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  just=lines[i];
+                }
               }
               rulename = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR);
               desc     = rulename " | " just;
@@ -151,5 +175,6 @@ jobs:
               repo: context.repo.repo,
               body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
             })
+
 
 
