@@ -57,11 +57,19 @@ jobs:
 
           mkdir -p firewall-requests
 
-          # 🧠 Gather all existing priorities across all JSON files
-          EXISTING_PRIORITIES=$(find firewall-requests -name '*.auto.tfvars.json' -exec jq -r '.auto_firewall_rules[].priority' {} + 2>/dev/null | sort -n)
-          NEXT_PRIORITY=1000
+          # ✅ Gather all used priorities safely
+          EXISTING_PRIORITIES=""
+          for file in firewall-requests/*.auto.tfvars.json; do
+            if [ -f "$file" ]; then
+              PRIOS=$(jq -r '.auto_firewall_rules[].priority' "$file" 2>/dev/null || true)
+              if [ -n "$PRIOS" ]; then
+                EXISTING_PRIORITIES+=$'\n'"$PRIOS"
+              fi
+            fi
+          done
+          EXISTING_PRIORITIES=$(echo "$EXISTING_PRIORITIES" | grep -E '^[0-9]+$' | sort -n)
 
-          # 📚 Build an associative array to mark used priorities
+          # Store priorities in a bash map
           declare -A used
           while read -r p; do
             used["$p"]=1
@@ -90,20 +98,20 @@ jobs:
             }
           ')
 
-          # Process rules with unique global priorities
-          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v nextprio="$NEXT_PRIORITY" '
+          # Process rules and assign globally unique priorities
+          echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" '
             BEGIN {
               RS="@@@"
-              priority = nextprio
+              nextprio = 1000
               while ((getline line < "/dev/fd/3") > 0) {
                 used[line] = 1
               }
               close("/dev/fd/3")
             }
             function get_next_priority(  p) {
-              while (used[priority]) priority++
-              used[priority] = 1
-              return priority++
+              while (used[nextprio]) nextprio++
+              used[nextprio] = 1
+              return nextprio++
             }
             NF {
               src=""; dst=""; ports=""; proto=""; dir=""; just="";
