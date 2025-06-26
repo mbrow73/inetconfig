@@ -137,7 +137,10 @@ jobs:
           TFVARS="{\"auto_firewall_rules\":[${RULES_JSON}]}"
 
           mkdir -p firewall-requests
-          printf '%s' "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
+          printf '%s' "$TFVARS" \
+            | sed -e 's/[\x00-\x1F]//g' \
+            | jq '.' \
+            > firewall-requests/${REQID}.auto.tfvars.json
 
           SUMMARY=$(cat rules_summary.txt)
           echo "RULE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
@@ -182,7 +185,5 @@ jobs:
               repo: context.repo.repo,
               body: `:robot: PR [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }}) opened/updated for NetSec review.`
             })
-
-
 
 
