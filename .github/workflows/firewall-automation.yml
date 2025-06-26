@@ -72,7 +72,6 @@ jobs:
           nextprio=1000
 
           # --- SPLIT RULE BLOCKS ---
-          # Each block will go in its own temp file for clean handling
           rm -f /tmp/ruleblock_*.txt
           echo "$ISSUE_BODY" | awk '
             BEGIN { rule=0 }
@@ -81,7 +80,6 @@ jobs:
             END { if(rule) print rule_block }
           ' > ruleblocks.txt
 
-          # Save each block as a temp file
           awk -v RS="@@@" 'NF {print > ("/tmp/ruleblock_" NR ".txt")}' ruleblocks.txt
 
           > rules.json
@@ -125,8 +123,7 @@ jobs:
               "$idx" "$src" "$dst" "${proto,,}" "$ports" "$dir" "$just" >> rules_summary.txt
           done
 
-          RULES_JSON=$(paste -sd, rules.json)
-          echo "{\"auto_firewall_rules\": [${RULES_JSON}]}" | jq . > firewall-requests/${REQID}.auto.tfvars.json
+          jq -s '{auto_firewall_rules: .}' rules.json > firewall-requests/${REQID}.auto.tfvars.json
 
           echo "RULE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
           cat rules_summary.txt >> $GITHUB_OUTPUT
