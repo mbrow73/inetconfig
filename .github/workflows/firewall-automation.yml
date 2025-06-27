@@ -61,7 +61,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
           ISSUE_BODY="${{ github.event.issue.body }}"
           REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
           CARID=$(echo "$ISSUE_BODY" | grep -i "CARID"     | head -1 | cut -d: -f2- | xargs)
@@ -69,6 +68,7 @@ jobs:
 
           MAX_PRIORITY=${{ steps.max_priority.outputs.MAX_PRIORITY }}
 
+          # split out the #### Rule blocks
           RULES=$(echo "$ISSUE_BODY" | awk '
             BEGIN{rule=0}
             /^#### Rule/{
@@ -79,35 +79,58 @@ jobs:
             END{ if(rule) print rule_block }
           ')
 
+          # build JSON + summary, now trimming whitespace on each extracted field
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v maxp="$MAX_PRIORITY" '
             BEGIN { RS="@@@"; }
             NF {
               src=""; dst=""; ports=""; proto=""; dir=""; just="";
               n=split($0, lines, "\n");
               for(i=1;i<=n;i++){
-                if(lines[i] ~ /New Source/)       { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); src=lines[i]; }
-                if(lines[i] ~ /New Destination/)  { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); dst=lines[i]; }
-                if(lines[i] ~ /New Port/)         { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); ports=lines[i]; }
-                if(lines[i] ~ /New Protocol/)     { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); proto=lines[i]; }
-                if(lines[i] ~ /New Direction/)    { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); dir=lines[i]; }
-                if(lines[i] ~ /New Business Justification/) { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); just=lines[i]; }
+                if(lines[i] ~ /New Source/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  src=lines[i];
+                }
+                if(lines[i] ~ /New Destination/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  dst=lines[i];
+                }
+                if(lines[i] ~ /New Port/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  ports=lines[i];
+                }
+                if(lines[i] ~ /New Protocol/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  proto=lines[i];
+                }
+                if(lines[i] ~ /New Direction/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  dir=lines[i];
+                }
+                if(lines[i] ~ /New Business Justification/) {
+                  sub(/.*: /,"",lines[i]);
+                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
+                  just=lines[i];
+                }
               }
-              rulename=sprintf("AUTO-%s-%s-%s-%s-%d",reqid,carid,toupper(proto),ports,NR);
-              desc=rulename" | "just;
+              rulename = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR);
+              desc     = rulename " | " just;
               printf("{\"name\":\"%s\",\"description\":\"%s\",\"direction\":\"%s\",\"src_ip_ranges\":[\"%s\"],\"dest_ip_ranges\":[\"%s\"],\"ports\":[\"%s\"],\"protocol\":\"%s\",\"priority\":%d,\"action\":\"allow\",\"enable_logging\":true}\n", \
-                     rulename,desc,dir,src,dst,ports,tolower(proto),maxp+NR) >> "rules.json";
-              printf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n", \
-                     NR,src,dst,tolower(proto),ports,dir,just) >> "rules_summary.txt";
+                     rulename, desc, dir, src, dst, ports, tolower(proto), maxp+NR) >> "rules.json";
+              rule_flow = sprintf("- **Rule %d:** %s → %s on %s/%s _(Direction: %s)_\n    Justification: %s\n", \
+                                  NR, src, dst, tolower(proto), ports, dir, just);
+              print rule_flow >> "rules_summary.txt";
             }
           '
 
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\":[${RULES_JSON}]}"
-
           mkdir -p firewall-requests
-          # write then clean the file: strip control‐chars AND trailing spaces
-          printf '%s' "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
-          sed -i -e 's/[\x00-\x1F]//g' -e 's/[[:space:]]\+$//' firewall-requests/${REQID}.auto.tfvars.json
+          echo "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
 
           SUMMARY=$(cat rules_summary.txt)
           echo "RULE_SUMMARY<<EOF" >> $GITHUB_OUTPUT
