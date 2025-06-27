@@ -61,7 +61,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          ISSUE_BODY="${{ github.event.issue.body }}"
+
+          ISSUE_BODY="$(printf '%s' "${{ github.event.issue.body }}" | tr -d $'\r' | sed -e 's/[\x00-\x1F]//g')"
           REQID=$(echo "$ISSUE_BODY" | grep -i "Request ID" | head -1 | cut -d: -f2- | xargs)
           CARID=$(echo "$ISSUE_BODY" | grep -i "CARID"     | head -1 | cut -d: -f2- | xargs)
           echo "REQID=$REQID" >> $GITHUB_OUTPUT
@@ -79,7 +80,7 @@ jobs:
             END{ if(rule) print rule_block }
           ')
 
-          # build JSON + summary, now trimming whitespace on each extracted field
+          # build JSON + summary, trimming whitespace on each extracted field
           echo "$RULES" | awk -v carid="$CARID" -v reqid="$REQID" -v maxp="$MAX_PRIORITY" '
             BEGIN { RS="@@@"; }
             NF {
@@ -129,6 +130,7 @@ jobs:
 
           RULES_JSON=$(paste -sd, rules.json)
           TFVARS="{\"auto_firewall_rules\":[${RULES_JSON}]}"
+
           mkdir -p firewall-requests
           echo "$TFVARS" | jq '.' > firewall-requests/${REQID}.auto.tfvars.json
 
