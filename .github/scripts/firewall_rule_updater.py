@@ -45,13 +45,12 @@ def load_all_rules():
     return rule_map, file_map
 
 def update_rule_fields(rule, updates, new_reqid, new_carid):
+    # build new name using only new_reqid and index stored in rule
+    idx = rule.get("_update_index", 1)
     proto = updates.get("protocol") or rule["protocol"]
     ports = updates.get("ports") or rule["ports"]
     direction = updates.get("direction") or rule["direction"]
     carid = new_carid or rule["name"].split("-")[2]
-    # Rule name: AUTO-REQID-CARID-PROTO-PORTS-INDEX
-    parts = rule["name"].split("-")
-    idx = parts[-1] if len(parts) > 1 else "1"
     new_name = f"AUTO-{new_reqid}-{carid}-{proto.upper()}-{','.join(ports)}-{idx}"
     rule["name"] = new_name
 
@@ -86,14 +85,12 @@ def validate_rule(rule, idx=1):
     return errors
 
 def parse_blocks(issue_body):
-    # Matches "#### Rule N" or "Rule N", splits on each, returns blocks
     blocks = re.split(r"(?:^|\n)#{0,6}\s*Rule\s*\d+\s*\n", issue_body, flags=re.IGNORECASE)
     return [b for b in blocks[1:] if b.strip()]
 
 def make_update_summary(idx, rule_name, old_rule, updates, new_rule):
     changes = []
-    # Compare each field and output old -> new if changed
-    for k, label in [
+    labels = [
         ("src_ip_ranges", "Source"),
         ("dest_ip_ranges", "Destination"),
         ("ports", "Ports"),
@@ -101,14 +98,14 @@ def make_update_summary(idx, rule_name, old_rule, updates, new_rule):
         ("direction", "Direction"),
         ("carid", "CARID"),
         ("description", "Justification"),
-    ]:
+    ]
+    for k, label in labels:
         old = old_rule.get(k)
         new = updates.get(k) if updates.get(k) else None
         if new is not None and old != new:
             old_val = ','.join(old) if isinstance(old, list) else old
             new_val = ','.join(new) if isinstance(new, list) else new
             changes.append(f"{label}: `{old_val}` → `{new_val}`")
-    # Always show new rule name
     if old_rule["name"] != new_rule["name"]:
         changes.append(f"Rule Name: `{old_rule['name']}` → `{new_rule['name']}`")
     if not changes:
@@ -123,13 +120,11 @@ def main():
     errors = []
     summaries = []
 
-    # Parse new REQID
     m_reqid = re.search(r"New Request ID.*?:\s*([A-Z0-9]+)", issue_body, re.IGNORECASE)
     new_reqid = m_reqid.group(1).strip() if m_reqid else None
     if not new_reqid or not validate_reqid(new_reqid):
         errors.append(f"New REQID must be 'REQ' followed by 7 or 8 digits. Found: '{new_reqid}'.")
 
-    # Parse rule blocks
     rule_blocks = parse_blocks(issue_body)
     updates = []
     for idx, block in enumerate(rule_blocks, 1):
@@ -155,10 +150,8 @@ def main():
             "description": extract("New Business Justification"),
         })
 
-    # Load all rules and file paths
     rule_map, file_map = load_all_rules()
 
-    # Group update requests by file
     updates_by_file = {}
     for update in updates:
         rule_name = update["rule_name"]
@@ -168,17 +161,15 @@ def main():
         file = file_map[rule_name]
         updates_by_file.setdefault(file, []).append(update)
 
-    # For each file, rewrite rules with updated versions in-place, preserving order
     for file, update_list in updates_by_file.items():
         with open(file) as f:
             file_data = json.load(f)
         orig_rules = file_data.get("auto_firewall_rules", [])
 
-        update_map = {u["rule_name"]: u for u in update_list}
         new_rules = []
         for idx, rule in enumerate(orig_rules, 1):
-            if rule["name"] in update_map:
-                update = update_map[rule["name"]]
+            if rule["name"] in {u["rule_name"] for u in update_list}:
+                update = next(u for u in update_list if u["rule_name"] == rule["name"])
                 new_fields = {}
                 if update["src_ip_ranges"]: new_fields["src_ip_ranges"] = update["src_ip_ranges"]
                 if update["dest_ip_ranges"]: new_fields["dest_ip_ranges"] = update["dest_ip_ranges"]
@@ -187,31 +178,30 @@ def main():
                 if update["direction"]: new_fields["direction"] = update["direction"]
                 if update["description"]: new_fields["description"] = update["description"]
                 new_carid = update["carid"]
-                updated_rule = update_rule_fields(rule.copy(), new_fields, new_reqid, new_carid)
+
+                to_update = rule.copy()
+                to_update["_update_index"] = idx
+                updated_rule = update_rule_fields(to_update, new_fields, new_reqid, new_carid)
                 rule_errors = validate_rule(updated_rule, idx=update["idx"])
                 if rule_errors: errors.extend(rule_errors)
                 new_rules.append(updated_rule)
 
-                # Build PR summary for this rule
                 summaries.append(make_update_summary(update["idx"], rule["name"], rule, update, updated_rule))
             else:
                 new_rules.append(rule)
 
         if not errors:
-            filename_reqs = re.findall(r"REQ\d{7,8}", file)
-            if new_reqid and (not filename_reqs or new_reqid not in filename_reqs):
-                new_name = new_reqid + "-" + "-".join(filename_reqs) + ".auto.tfvars.json"
-                new_path = os.path.join(os.path.dirname(file), new_name)
-                with open(new_path, "w") as f:
-                    json.dump({"auto_firewall_rules": new_rules}, f, indent=2)
-                if os.path.abspath(file) != os.path.abspath(new_path):
-                    os.remove(file)
-            else:
-                with open(file, "w") as f:
-                    json.dump({"auto_firewall_rules": new_rules}, f, indent=2)
+            dirpath = os.path.dirname(file)
+            new_filename = f"{new_reqid}-{os.path.basename(file)}"
+            new_path = os.path.join(dirpath, new_filename)
+
+            with open(new_path, "w") as f:
+                json.dump({"auto_firewall_rules": new_rules}, f, indent=2)
+
+            if os.path.abspath(file) != os.path.abspath(new_path):
+                os.remove(file)
 
     if not errors:
-        # Write the PR summary
         with open("rule_update_summary.txt", "w") as f:
             for line in summaries:
                 f.write(line + "\n")
