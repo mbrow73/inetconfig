@@ -1,3 +1,4 @@
+```python
 import re
 import sys
 import os
@@ -45,15 +46,20 @@ def load_all_rules():
     return rule_map, file_map
 
 def update_rule_fields(rule, updates, new_reqid, new_carid):
-    # build new name using only new_reqid and index stored in rule
+    """
+    Update fields and rename rule using new_reqid and stored index.
+    """
     idx = rule.get("_update_index", 1)
     proto = updates.get("protocol") or rule["protocol"]
     ports = updates.get("ports") or rule["ports"]
     direction = updates.get("direction") or rule["direction"]
     carid = new_carid or rule["name"].split("-")[2]
+
+    # Construct new rule name without old REQID
     new_name = f"AUTO-{new_reqid}-{carid}-{proto.upper()}-{','.join(ports)}-{idx}"
     rule["name"] = new_name
 
+    # Apply updates to fields
     for k, v in updates.items():
         if v:
             if k in ["protocol", "direction"]:
@@ -120,11 +126,13 @@ def main():
     errors = []
     summaries = []
 
+    # Parse new REQID
     m_reqid = re.search(r"New Request ID.*?:\s*([A-Z0-9]+)", issue_body, re.IGNORECASE)
     new_reqid = m_reqid.group(1).strip() if m_reqid else None
     if not new_reqid or not validate_reqid(new_reqid):
         errors.append(f"New REQID must be 'REQ' followed by 7 or 8 digits. Found: '{new_reqid}'.")
 
+    # Parse rule blocks
     rule_blocks = parse_blocks(issue_body)
     updates = []
     for idx, block in enumerate(rule_blocks, 1):
@@ -150,8 +158,10 @@ def main():
             "description": extract("New Business Justification"),
         })
 
+    # Load existing rules
     rule_map, file_map = load_all_rules()
 
+    # Group updates by file path
     updates_by_file = {}
     for update in updates:
         rule_name = update["rule_name"]
@@ -161,6 +171,7 @@ def main():
         file = file_map[rule_name]
         updates_by_file.setdefault(file, []).append(update)
 
+    # Apply updates per file
     for file, update_list in updates_by_file.items():
         with open(file) as f:
             file_data = json.load(f)
@@ -179,13 +190,16 @@ def main():
                 if update["description"]: new_fields["description"] = update["description"]
                 new_carid = update["carid"]
 
+                # attach index for naming
                 to_update = rule.copy()
                 to_update["_update_index"] = idx
                 updated_rule = update_rule_fields(to_update, new_fields, new_reqid, new_carid)
+
                 rule_errors = validate_rule(updated_rule, idx=update["idx"])
                 if rule_errors: errors.extend(rule_errors)
                 new_rules.append(updated_rule)
 
+                # summary line
                 summaries.append(make_update_summary(update["idx"], rule["name"], rule, update, updated_rule))
             else:
                 new_rules.append(rule)
@@ -195,17 +209,28 @@ def main():
             new_filename = f"{new_reqid}-{os.path.basename(file)}"
             new_path = os.path.join(dirpath, new_filename)
 
+            # clean empty entries and remove internal keys
+            cleaned = []
+            for r in new_rules:
+                r.pop("_update_index", None)
+                r["src_ip_ranges"] = [ip for ip in r.get("src_ip_ranges", []) if ip]
+                r["dest_ip_ranges"] = [ip for ip in r.get("dest_ip_ranges", []) if ip]
+                r["ports"] = [p for p in r.get("ports", []) if p]
+                cleaned.append(r)
+
             with open(new_path, "w") as f:
-                json.dump({"auto_firewall_rules": new_rules}, f, indent=2)
+                json.dump({"auto_firewall_rules": cleaned}, f, indent=2)
 
             if os.path.abspath(file) != os.path.abspath(new_path):
                 os.remove(file)
 
+    # write summary
     if not errors:
         with open("rule_update_summary.txt", "w") as f:
             for line in summaries:
                 f.write(line + "\n")
 
+    # output validation errors if any
     if errors:
         print("VALIDATION_ERRORS_START")
         for e in errors:
@@ -215,3 +240,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
