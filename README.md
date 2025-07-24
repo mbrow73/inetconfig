@@ -21,7 +21,7 @@
 | - | ------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |---------|
 | 1 | **Remove existing rule**        | “Current Rule Name: AUTO-...-443-1”                    | File is rewritten without that rule; PR opens with summary; rule is gone.                      |    Expected     |
 | 2 | **Remove non‑existent rule**    | Name that isn’t in any file                            | Validation fails; comment “No rule found with name …”; issue closed.                           |    Expected     |
-| 3 | **Missing “Current Rule Name”** | Omit the field                                         | Validation fails; comment “‘Current Rule Name’ is required”; issue closed.                     |         |
-| 4 | **Multiple removes**            | Two `#### Rule` blocks for removal                     | Both rules removed from their respective files; summary bullet for each; PR opens.             |         |
+| 3 | **Missing “Current Rule Name”** | Omit the field                                         | Validation fails; comment “‘Current Rule Name’ is required”; issue closed.                     |    Expected     |
+| 4 | **Multiple removes**            | Two `#### Rule` blocks for removal                     | Both rules removed from their respective files; summary bullet for each; PR opens.             |    Expected     |
 | 5 | **Mixed valid + invalid**       | One valid, one bogus name                              | Validation fails on the bogus one; no partial removals; comment lists both successes/failures. |         |
 | 6 | **Label mismatch**              | Body valid but missing `firewall-update-request` label | Job skipped.                                                                                   |         |
