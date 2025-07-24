@@ -5,6 +5,12 @@ import glob
 import json
 from collections import defaultdict
 
+ALLOWED_PUBLIC_RANGES = [
+    ipaddress.ip_network("35.191.0.0/16"),     # GCP health‑check
+    ipaddress.ip_network("130.211.0.0/22"),    # GCP health‑check
+    ipaddress.ip_network("199.36.153.4/30"),   # restricted googleapis
+]
+
 def validate_reqid(reqid):
     return bool(re.fullmatch(r"REQ\d{7,8}", reqid))
 
@@ -23,25 +29,22 @@ def validate_ip(ip):
 
 def validate_port(port):
     if re.fullmatch(r"\d{1,5}", port):
-        n = int(port)
-        return 1 <= n <= 65535
+        n = int(port); return 1 <= n <= 65535
     if re.fullmatch(r"\d{1,5}-\d{1,5}", port):
-        a, b = map(int, port.split('-'))
-        return 1 <= a <= b <= 65535
+        a, b = map(int, port.split('-')); return 1 <= a <= b <= 65535
     return False
 
 def port_is_subset(child, parent):
-    """Returns True if every port in 'child' is also in 'parent'."""
     def expand(p):
-        res = set()
+        s = set()
         for part in p.split(","):
             part = part.strip()
             if '-' in part:
                 a, b = map(int, part.split('-'))
-                res.update(range(a, b+1))
+                s.update(range(a, b+1))
             else:
-                res.add(int(part))
-        return res
+                s.add(int(part))
+        return s
     return expand(child).issubset(expand(parent))
 
 def protocol_is_subset(child, parent):
@@ -49,7 +52,8 @@ def protocol_is_subset(child, parent):
 
 def network_is_subset(child, parent):
     try:
-        return ipaddress.ip_network(child, strict=False).subnet_of(ipaddress.ip_network(parent, strict=False))
+        return ipaddress.ip_network(child, strict=False).subnet_of(
+               ipaddress.ip_network(parent, strict=False))
     except Exception:
         return False
 
@@ -62,126 +66,135 @@ def parse_rule_block(block):
         return m.group(1).strip() if m else fallback
 
     return {
-        "src": extract("New Source"),
-        "dst": extract("New Destination"),
+        "src":   extract("New Source"),
+        "dst":   extract("New Destination"),
         "ports": extract("New Port"),
         "proto": extract("New Protocol"),
         "direction": extract("New Direction"),
-        "just": extract("New Business Justification"),
+        "just":  extract("New Business Justification"),
     }
 
 def parse_existing_rules():
-    """Parse all rules in firewall-requests/*.auto.tfvars.json as a list of dicts"""
     rules = []
     for path in glob.glob("firewall-requests/*.auto.tfvars.json"):
         try:
-            with open(path) as f:
-                data = json.load(f)
-                for r in data.get("auto_firewall_rules", []):
-                    # Use only the first value in src_ip_ranges/dest_ip_ranges/ports for comparison (simplified for demo)
-                    rules.append({
-                        "src": ",".join(r.get("src_ip_ranges", [])),
-                        "dst": ",".join(r.get("dest_ip_ranges", [])),
-                        "ports": ",".join(r.get("ports", [])),
-                        "proto": r.get("protocol"),
-                        "direction": r.get("direction"),
-                    })
-        except Exception as e:
+            data = json.load(open(path))
+            for r in data.get("auto_firewall_rules", []):
+                rules.append({
+                    "src":   ",".join(r.get("src_ip_ranges", [])),
+                    "dst":   ",".join(r.get("dest_ip_ranges", [])),
+                    "ports": ",".join(r.get("ports", [])),
+                    "proto": r.get("protocol"),
+                    "direction": r.get("direction"),
+                })
+        except Exception:
             continue
     return rules
 
 def rule_exact_match(rule, rulelist):
     for r in rulelist:
-        if (rule["src"] == r["src"] and
-            rule["dst"] == r["dst"] and
-            rule["ports"] == r["ports"] and
-            rule["proto"] == r["proto"] and
-            rule["direction"] == r["direction"]):
+        if (rule["src"]==r["src"] and rule["dst"]==r["dst"]
+         and rule["ports"]==r["ports"] and rule["proto"]==r["proto"]
+         and rule["direction"]==r["direction"]):
             return True
     return False
 
 def rule_is_redundant(rule, rulelist):
-    """Checks if any rule in rulelist completely covers this rule (src/dst/proto/ports/direction superset)"""
     for r in rulelist:
-        if (rule["direction"] == r["direction"] and
-            protocol_is_subset(rule["proto"], r["proto"])):
-            # All src/dst in rule are subset of those in r
-            srcs_child = [s.strip() for s in rule["src"].split(",")]
-            srcs_parent = [s.strip() for s in r["src"].split(",")]
-            dsts_child = [s.strip() for s in rule["dst"].split(",")]
-            dsts_parent = [s.strip() for s in r["dst"].split(",")]
-            srcs_covered = all(any(network_is_subset(c, p) for p in srcs_parent) for c in srcs_child)
-            dsts_covered = all(any(network_is_subset(c, p) for p in dsts_parent) for c in dsts_child)
-            ports_covered = port_is_subset(rule["ports"], r["ports"])
-            if srcs_covered and dsts_covered and ports_covered:
+        if (rule["direction"]==r["direction"]
+         and protocol_is_subset(rule["proto"], r["proto"])):
+            srcs_child = [c.strip() for c in rule["src"].split(",")]
+            srcs_parent= [p.strip() for p in r["src"].split(",")]
+            dsts_child = [c.strip() for c in rule["dst"].split(",")]
+            dsts_parent= [p.strip() for p in r["dst"].split(",")]
+            if all(any(network_is_subset(c,p) for p in srcs_parent) for c in srcs_child) \
+            and all(any(network_is_subset(c,p) for p in dsts_parent) for c in dsts_child) \
+            and port_is_subset(rule["ports"], r["ports"]):
                 return True
     return False
 
 def main():
     issue_file = sys.argv[1]
-    with open(issue_file) as f:
-        issue = f.read()
-
+    issue = open(issue_file).read()
     errors = []
 
-    # Extract REQID
+    # REQID
     m_reqid = re.search(r"Request ID.*?:\s*([A-Z0-9]+)", issue, re.IGNORECASE)
     reqid = m_reqid.group(1).strip() if m_reqid else None
     if not reqid or not validate_reqid(reqid):
-        errors.append(f"❌ REQID must be in format 'REQ' followed by 7 or 8 digits (e.g. REQ1234567). Found: '{reqid}'")
+        errors.append(f"❌ REQID must be 'REQ' plus 7–8 digits. Found: '{reqid}'")
 
-    # Extract CARID
+    # CARID
     m_carid = re.search(r"CARID.*?:\s*(\d+)", issue, re.IGNORECASE)
     carid = m_carid.group(1).strip() if m_carid else None
     if not carid or not validate_carid(carid):
-        errors.append(f"❌ CARID must be exactly 9 numerical digits. Found: '{carid}'")
+        errors.append(f"❌ CARID must be exactly 9 digits. Found: '{carid}'")
 
-    # Extract Rule blocks
-    rule_blocks = re.split(r"#### Rule", issue, flags=re.IGNORECASE)[1:]  # Skip the header
+    # Rule blocks
+    blocks = re.split(r"#### Rule", issue, flags=re.IGNORECASE)[1:]
     seen = set()
-    for idx, block in enumerate(rule_blocks, 1):
+    for idx, block in enumerate(blocks, 1):
         rule = parse_rule_block(block)
         src, dst, ports, proto, direction, just = (
-            rule["src"], rule["dst"], rule["ports"], rule["proto"], rule["direction"], rule["just"]
+            rule["src"], rule["dst"], rule["ports"],
+            rule["proto"], rule["direction"], rule["just"]
         )
-        # Field presence
+
+        # presence
         if not all([src, dst, ports, proto, direction, just]):
-            errors.append(f"❌ Rule {idx}: All fields must be present and non-empty.")
+            errors.append(f"❌ Rule {idx}: All fields must be present.")
             continue
-        # Protocol
+
+        # protocol
         if proto != proto.lower() or not validate_protocol(proto):
-            errors.append(f"❌ Rule {idx}: Protocol must be lowercase and one of tcp, udp, icmp, sctp. Found: '{proto}'")
-        # IP validation
+            errors.append(f"❌ Rule {idx}: Protocol must be tcp, udp, icmp or sctp (lowercase).")
+
+        # IP & CIDR rules
         for ip_field, value in [("source", src), ("destination", dst)]:
             for ip in value.split(","):
-                if not validate_ip(ip.strip()):
-                    errors.append(f"❌ Rule {idx}: Invalid {ip_field} IP/CIDR: '{ip.strip()}'")
-        # Port validation
-        for port in ports.split(","):
-            if not validate_port(port.strip()):
-                errors.append(f"❌ Rule {idx}: Invalid port or range: '{port.strip()}'")
-        # Duplicate within request
+                ip = ip.strip()
+                if not validate_ip(ip):
+                    errors.append(f"❌ Rule {idx}: Invalid {ip_field} '{ip}'.")
+                    continue
+                net = ipaddress.ip_network(ip, strict=False)
+                # disallow 0.0.0.0/0
+                if net == ipaddress.ip_network("0.0.0.0/0"):
+                    errors.append(f"❌ Rule {idx}: {ip_field.capitalize()} may not be 0.0.0.0/0.")
+                # no CIDRs larger than /24
+                if net.prefixlen < 24:
+                    errors.append(f"❌ Rule {idx}: {ip_field.capitalize()} '{ip}' prefix /{net.prefixlen} too large (must be /24 or smaller).")
+                # public IP restrictions
+                if not net.is_private:
+                    allowed = any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES)
+                    if not allowed:
+                        errors.append(f"❌ Rule {idx}: {ip_field.capitalize()} '{ip}' is public and not in allowed GCP ranges.")
+
+        # port
+        for p in ports.split(","):
+            if not validate_port(p.strip()):
+                errors.append(f"❌ Rule {idx}: Invalid port or range '{p.strip()}'.")
+
+        # duplicate in this request
         key = (src, dst, ports, proto, direction)
         if key in seen:
-            errors.append(f"❌ Rule {idx}: Duplicate rule (source, dest, ports, proto, direction) within this request.")
+            errors.append(f"❌ Rule {idx}: Duplicate rule in request.")
         seen.add(key)
 
-    # Global duplicate/redundant check (across all firewall-requests/*.auto.tfvars.json)
-    existing_rules = parse_existing_rules()
-    for idx, block in enumerate(rule_blocks, 1):
+    # global duplicates/redundancy
+    existing = parse_existing_rules()
+    for idx, block in enumerate(blocks, 1):
         rule = parse_rule_block(block)
-        # Only check if rule fields are all present and valid
         if not all([rule["src"], rule["dst"], rule["ports"], rule["proto"], rule["direction"]]):
             continue
-        if rule_exact_match(rule, existing_rules):
-            errors.append(f"❌ Rule {idx}: Rule is an exact duplicate of an existing rule in the rulebase.")
-        elif rule_is_redundant(rule, existing_rules):
-            errors.append(f"❌ Rule {idx}: Rule is already covered (redundant) by an existing broader rule in the rulebase.")
+        if rule_exact_match(rule, existing):
+            errors.append(f"❌ Rule {idx}: Exact duplicate of existing rule.")
+        elif rule_is_redundant(rule, existing):
+            errors.append(f"❌ Rule {idx}: Redundant—covered by existing broader rule.")
 
+    # output
     if errors:
         print("VALIDATION_ERRORS_START")
-        for e in errors:
-            print(e)
+        for e in errors: print(e)
         print("VALIDATION_ERRORS_END")
         sys.exit(1)
 
