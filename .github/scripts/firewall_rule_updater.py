@@ -66,7 +66,7 @@ def update_rule_fields(rule, updates, new_reqid, new_carid):
             else:
                 rule[k] = v
 
-    desc_just = updates.get("description") or rule.get("description", "").split("|",1)[-1]
+    desc_just = updates.get("description") or rule.get("description", "").split("|", 1)[-1]
     rule["description"] = f"{new_name} | {desc_just.strip()}"
     return rule
 
@@ -135,15 +135,17 @@ def main():
     rule_blocks = parse_blocks(issue_body)
     updates = []
     for idx, block in enumerate(rule_blocks, 1):
+        # Ensure we have a Current Rule Name
         m_name = re.search(r"Current Rule Name.*?:\s*([^\n]+)", block, re.IGNORECASE)
-        rule_name = m_name.group(1).strip() if m_name else None
-        if not rule_name:
+        if not m_name:
             errors.append(f"Rule {idx}: 'Current Rule Name' is required.")
             continue
+        rule_name = m_name.group(1).strip()
+
+        # Extract all other fields
         def extract(label):
             m = re.search(rf"{label}.*?:\s*(.+)", block, re.IGNORECASE)
-            val = m.group(1).strip() if m else ""
-            return val
+            return m.group(1).strip() if m else ""
 
         updates.append({
             "idx": idx,
@@ -195,10 +197,11 @@ def main():
                 updated_rule = update_rule_fields(to_update, new_fields, new_reqid, new_carid)
 
                 rule_errors = validate_rule(updated_rule, idx=update["idx"])
-                if rule_errors: errors.extend(rule_errors)
+                if rule_errors:
+                    errors.extend(rule_errors)
                 new_rules.append(updated_rule)
 
-                # summary line
+                # Build PR summary
                 summaries.append(make_update_summary(update["idx"], rule["name"], rule, update, updated_rule))
             else:
                 new_rules.append(rule)
@@ -208,28 +211,19 @@ def main():
             new_filename = f"{new_reqid}-{os.path.basename(file)}"
             new_path = os.path.join(dirpath, new_filename)
 
-            # clean empty entries and remove internal keys
-            cleaned = []
-            for r in new_rules:
-                r.pop("_update_index", None)
-                r["src_ip_ranges"] = [ip for ip in r.get("src_ip_ranges", []) if ip]
-                r["dest_ip_ranges"] = [ip for ip in r.get("dest_ip_ranges", []) if ip]
-                r["ports"] = [p for p in r.get("ports", []) if p]
-                cleaned.append(r)
-
             with open(new_path, "w") as f:
-                json.dump({"auto_firewall_rules": cleaned}, f, indent=2)
+                json.dump({"auto_firewall_rules": new_rules}, f, indent=2)
 
             if os.path.abspath(file) != os.path.abspath(new_path):
                 os.remove(file)
 
-    # write summary
+    # Write summary if no errors
     if not errors:
         with open("rule_update_summary.txt", "w") as f:
             for line in summaries:
                 f.write(line + "\n")
 
-    # output validation errors if any
+    # Output validation errors if any
     if errors:
         print("VALIDATION_ERRORS_START")
         for e in errors:
@@ -239,4 +233,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
