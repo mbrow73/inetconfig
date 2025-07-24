@@ -30,7 +30,21 @@ jobs:
         id: validate
         shell: bash
         run: |
+          # write the issue body to disk
           echo "${{ github.event.issue.body }}" > issue.txt
+
+          # ———————— INSERT: duplicate-REQID guard ————————
+          # extract the REQID from the issue
+          REQID=$(grep -i "Request ID" issue.txt | head -1 | cut -d: -f2- | xargs)
+          # if a file already exists with that REQID, reject immediately
+          if [ -f firewall-requests/${REQID}.auto.tfvars.json ]; then
+            gh issue comment ${{ github.event.issue.number }} --body $'### ❌ Duplicate Request ID\n\nThe Request ID **'"${REQID}"'** has already been used for a firewall request. Please choose a new Request ID or submit an update request instead.'
+            gh issue close ${{ github.event.issue.number }}
+            exit 1
+          fi
+          # ————————————————————————————————————————————————
+
+          # run your existing validation script
           python3 .github/scripts/firewall_request_validator.py issue.txt > validation_output.txt || VALIDATION_FAILED=1
           if [[ "$VALIDATION_FAILED" == "1" ]]; then
             ERRORS=$(awk '/VALIDATION_ERRORS_START/,/VALIDATION_ERRORS_END/' validation_output.txt \
@@ -87,36 +101,12 @@ jobs:
               src=""; dst=""; ports=""; proto=""; dir=""; just="";
               n=split($0, lines, "\n");
               for(i=1;i<=n;i++){
-                if(lines[i] ~ /New Source/) {
-                  sub(/.*: /,"",lines[i]);
-                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
-                  src=lines[i];
-                }
-                if(lines[i] ~ /New Destination/) {
-                  sub(/.*: /,"",lines[i]);
-                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
-                  dst=lines[i];
-                }
-                if(lines[i] ~ /New Port/) {
-                  sub(/.*: /,"",lines[i]);
-                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
-                  ports=lines[i];
-                }
-                if(lines[i] ~ /New Protocol/) {
-                  sub(/.*: /,"",lines[i]);
-                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
-                  proto=lines[i];
-                }
-                if(lines[i] ~ /New Direction/) {
-                  sub(/.*: /,"",lines[i]);
-                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
-                  dir=lines[i];
-                }
-                if(lines[i] ~ /New Business Justification/) {
-                  sub(/.*: /,"",lines[i]);
-                  gsub(/^[ \t]+|[ \t]+$/,"",lines[i]);
-                  just=lines[i];
-                }
+                if(lines[i] ~ /New Source/)        { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); src=lines[i]; }
+                if(lines[i] ~ /New Destination/)   { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); dst=lines[i]; }
+                if(lines[i] ~ /New Port/)          { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); ports=lines[i]; }
+                if(lines[i] ~ /New Protocol/)      { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); proto=lines[i]; }
+                if(lines[i] ~ /New Direction/)     { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); dir=lines[i]; }
+                if(lines[i] ~ /New Business Justification/) { sub(/.*: /,"",lines[i]); gsub(/^[ \t]+|[ \t]+$/,"",lines[i]); just=lines[i]; }
               }
               rulename = sprintf("AUTO-%s-%s-%s-%s-%d", reqid, carid, toupper(proto), ports, NR);
               desc     = rulename " | " just;
