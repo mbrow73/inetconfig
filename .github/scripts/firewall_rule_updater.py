@@ -1,9 +1,17 @@
+#!/usr/bin/env python3
 import re
 import sys
 import os
 import glob
 import json
 import ipaddress
+
+# Only these oversized public ranges are allowed
+ALLOWED_PUBLIC_RANGES = [
+    ipaddress.ip_network("35.191.0.0/16"),    # GCP health‑check
+    ipaddress.ip_network("130.211.0.0/22"),   # GCP health‑check
+    ipaddress.ip_network("199.36.153.4/30"),  # restricted googleapis
+]
 
 def validate_reqid(reqid):
     return bool(re.fullmatch(r"REQ\d{7,8}", reqid))
@@ -18,16 +26,14 @@ def validate_ip(ip):
         else:
             ipaddress.ip_address(ip)
         return True
-    except Exception:
+    except:
         return False
 
 def validate_port(port):
     if re.fullmatch(r"\d{1,5}", port):
-        n = int(port)
-        return 1 <= n <= 65535
+        n = int(port); return 1 <= n <= 65535
     if re.fullmatch(r"\d{1,5}-\d{1,5}", port):
-        a, b = map(int, port.split('-'))
-        return 1 <= a <= b <= 65535
+        a, b = map(int, port.split('-')); return 1 <= a <= b <= 65535
     return False
 
 def validate_protocol(proto):
@@ -45,26 +51,18 @@ def load_all_rules():
     return rule_map, file_map
 
 def update_rule_fields(rule, updates, new_reqid, new_carid):
-    """
-    Update fields and rename rule using new_reqid and stored index.
-    """
     idx = rule.get("_update_index", 1)
     proto = updates.get("protocol") or rule["protocol"]
     ports = updates.get("ports") or rule["ports"]
     direction = updates.get("direction") or rule["direction"]
     carid = new_carid or rule["name"].split("-")[2]
 
-    # Construct new rule name without old REQID
     new_name = f"AUTO-{new_reqid}-{carid}-{proto.upper()}-{','.join(ports)}-{idx}"
     rule["name"] = new_name
 
-    # Apply updates to fields
     for k, v in updates.items():
         if v:
-            if k in ["protocol", "direction"]:
-                rule[k] = v.lower()
-            else:
-                rule[k] = v
+            rule[k] = (v.lower() if k in ["protocol", "direction"] else v)
 
     desc_just = updates.get("description") or rule.get("description", "").split("|",1)[-1]
     rule["description"] = f"{new_name} | {desc_just.strip()}"
@@ -72,21 +70,57 @@ def update_rule_fields(rule, updates, new_reqid, new_carid):
 
 def validate_rule(rule, idx=1):
     errors = []
+
+    # IP/CIDR validations
     for field in ["src_ip_ranges", "dest_ip_ranges"]:
+        label = "Source" if field=="src_ip_ranges" else "Destination"
         for ip in rule.get(field, []):
             if not validate_ip(ip):
-                errors.append(f"Rule {idx}: Invalid {field.replace('_',' ')} '{ip}'. Please use a valid IP or CIDR.")
+                errors.append(f"Rule {idx}: Invalid {label.lower()} IP/CIDR '{ip}'.")
+                continue
+
+            net = ipaddress.ip_network(ip, strict=False)
+
+            # 1) Disallow 0.0.0.0/0
+            if net == ipaddress.ip_network("0.0.0.0/0"):
+                errors.append(f"Rule {idx}: {label} may not be 0.0.0.0/0.")
+                continue
+
+            # 2) Disallow CIDRs larger than /24 unless in allowed public ranges
+            if net.prefixlen < 24:
+                if not any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES):
+                    errors.append(
+                        f"Rule {idx}: {label} '{ip}' is /{net.prefixlen}, must be /24 or smaller "
+                        "unless it’s a GCP health‑check range."
+                    )
+                continue
+
+            # 3) Disallow all other public IP ranges not in ALLOWED_PUBLIC_RANGES
+            if not net.is_private:
+                if not any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES):
+                    errors.append(f"Rule {idx}: Public {label} '{ip}' not in allowed GCP ranges.")
+                continue
+
+    # Port validation
     for port in rule.get("ports", []):
         if not validate_port(port):
             errors.append(f"Rule {idx}: Invalid port or range: '{port}'.")
+
+    # Protocol validation
     proto = rule.get("protocol", "")
     if proto != proto.lower() or not validate_protocol(proto):
         errors.append(f"Rule {idx}: Protocol must be one of: tcp, udp, icmp, sctp (lowercase). Found: '{proto}'")
-    if rule.get("direction","").upper() not in {"INGRESS", "EGRESS"}:
-        errors.append(f"Rule {idx}: Direction must be INGRESS or EGRESS.")
+
+    # Direction validation
+    direction = rule.get("direction", "")
+    if direction.upper() not in {"INGRESS", "EGRESS"}:
+        errors.append(f"Rule {idx}: Direction must be INGRESS or EGRESS. Found: '{direction}'")
+
+    # CARID in name
     carid = rule["name"].split("-")[2]
     if not validate_carid(carid):
         errors.append(f"Rule {idx}: CARID must be 9 digits. Found: '{carid}'.")
+
     return errors
 
 def parse_blocks(issue_body):
@@ -142,8 +176,7 @@ def main():
             continue
         def extract(label):
             m = re.search(rf"{label}.*?:\s*(.+)", block, re.IGNORECASE)
-            val = m.group(1).strip() if m else ""
-            return val
+            return m.group(1).strip() if m else ""
 
         updates.append({
             "idx": idx,
@@ -181,46 +214,40 @@ def main():
             if rule["name"] in {u["rule_name"] for u in update_list}:
                 update = next(u for u in update_list if u["rule_name"] == rule["name"])
                 new_fields = {}
-                if update["src_ip_ranges"]: new_fields["src_ip_ranges"] = update["src_ip_ranges"]
-                if update["dest_ip_ranges"]: new_fields["dest_ip_ranges"] = update["dest_ip_ranges"]
-                if update["ports"]: new_fields["ports"] = update["ports"]
-                if update["protocol"]: new_fields["protocol"] = update["protocol"]
-                if update["direction"]: new_fields["direction"] = update["direction"]
-                if update["description"]: new_fields["description"] = update["description"]
+                if update["src_ip_ranges"]:     new_fields["src_ip_ranges"] = update["src_ip_ranges"]
+                if update["dest_ip_ranges"]:    new_fields["dest_ip_ranges"] = update["dest_ip_ranges"]
+                if update["ports"]:             new_fields["ports"] = update["ports"]
+                if update["protocol"]:          new_fields["protocol"] = update["protocol"]
+                if update["direction"]:         new_fields["direction"] = update["direction"]
+                if update["description"]:       new_fields["description"] = update["description"]
                 new_carid = update["carid"]
 
-                # attach index for naming
                 to_update = rule.copy()
                 to_update["_update_index"] = idx
                 updated_rule = update_rule_fields(to_update, new_fields, new_reqid, new_carid)
 
                 rule_errors = validate_rule(updated_rule, idx=update["idx"])
-                if rule_errors: errors.extend(rule_errors)
+                if rule_errors:
+                    errors.extend(rule_errors)
                 new_rules.append(updated_rule)
-
-                # summary line
                 summaries.append(make_update_summary(update["idx"], rule["name"], rule, update, updated_rule))
             else:
                 new_rules.append(rule)
 
         if not errors:
-            dirpath = os.path.dirname(file)
-            new_filename = f"{new_reqid}-{os.path.basename(file)}"
-            new_path = os.path.join(dirpath, new_filename)
-
-            # clean empty entries and remove internal keys
-            cleaned = []
+            dirpath  = os.path.dirname(file)
+            new_name = f"{new_reqid}-{os.path.basename(file)}"
+            new_path = os.path.join(dirpath, new_name)
+            cleaned  = []
             for r in new_rules:
                 r.pop("_update_index", None)
-                r["src_ip_ranges"] = [ip for ip in r.get("src_ip_ranges", []) if ip]
+                r["src_ip_ranges"]  = [ip for ip in r.get("src_ip_ranges", []) if ip]
                 r["dest_ip_ranges"] = [ip for ip in r.get("dest_ip_ranges", []) if ip]
-                r["ports"] = [p for p in r.get("ports", []) if p]
+                r["ports"]          = [p for p in r.get("ports", []) if p]
                 cleaned.append(r)
-
             with open(new_path, "w") as f:
                 json.dump({"auto_firewall_rules": cleaned}, f, indent=2)
-
-            if os.path.abspath(file) != os.path.abspath(new_path):
+            if os.path.abspath(new_path) != os.path.abspath(file):
                 os.remove(file)
 
     # write summary
