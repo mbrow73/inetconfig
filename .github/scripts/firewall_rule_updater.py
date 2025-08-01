@@ -6,13 +6,6 @@ import glob
 import json
 import ipaddress
 
-# Only these oversized public ranges are allowed
-ALLOWED_PUBLIC_RANGES = [
-    ipaddress.ip_network("35.191.0.0/16"),    # GCP health‑check
-    ipaddress.ip_network("130.211.0.0/22"),   # GCP health‑check
-    ipaddress.ip_network("199.36.153.4/30"),  # restricted googleapis
-]
-
 def validate_reqid(reqid):
     return bool(re.fullmatch(r"REQ\d{7,8}", reqid))
 
@@ -20,20 +13,22 @@ def validate_carid(carid):
     return bool(re.fullmatch(r"\d{9}", carid))
 
 def validate_ip(ip):
+    # fail if no CIDR mask present
+    if "/" not in ip:
+        return False
     try:
-        if "/" in ip:
-            ipaddress.ip_network(ip, strict=False)
-        else:
-            ipaddress.ip_address(ip)
+        ipaddress.ip_network(ip, strict=False)
         return True
     except:
         return False
 
 def validate_port(port):
     if re.fullmatch(r"\d{1,5}", port):
-        n = int(port); return 1 <= n <= 65535
+        n = int(port)
+        return 1 <= n <= 65535
     if re.fullmatch(r"\d{1,5}-\d{1,5}", port):
-        a, b = map(int, port.split('-')); return 1 <= a <= b <= 65535
+        a, b = map(int, port.split('-'))
+        return 1 <= a <= b <= 65535
     return False
 
 def validate_protocol(proto):
@@ -71,34 +66,16 @@ def update_rule_fields(rule, updates, new_reqid, new_carid):
 def validate_rule(rule, idx=1):
     errors = []
 
-    # IP/CIDR validations
-    for field in ["src_ip_ranges", "dest_ip_ranges"]:
-        label = "Source" if field=="src_ip_ranges" else "Destination"
+    # IP/CIDR validations (require slash mask)
+    for field, label in [("src_ip_ranges","Source"), ("dest_ip_ranges","Destination")]:
         for ip in rule.get(field, []):
-            if not validate_ip(ip):
+            if "/" not in ip:
+                errors.append(f"Rule {idx}: {label} '{ip}' must include a CIDR mask (e.g. /32).")
+                continue
+            try:
+                net = ipaddress.ip_network(ip, strict=False)
+            except:
                 errors.append(f"Rule {idx}: Invalid {label.lower()} IP/CIDR '{ip}'.")
-                continue
-
-            net = ipaddress.ip_network(ip, strict=False)
-
-            # 1) Disallow 0.0.0.0/0
-            if net == ipaddress.ip_network("0.0.0.0/0"):
-                errors.append(f"Rule {idx}: {label} may not be 0.0.0.0/0.")
-                continue
-
-            # 2) Disallow CIDRs larger than /24 unless in allowed public ranges
-            if net.prefixlen < 24:
-                if not any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES):
-                    errors.append(
-                        f"Rule {idx}: {label} '{ip}' is /{net.prefixlen}, must be /24 or smaller "
-                        "unless it’s a GCP health‑check range."
-                    )
-                continue
-
-            # 3) Disallow all other public IP ranges not in ALLOWED_PUBLIC_RANGES
-            if not net.is_private:
-                if not any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES):
-                    errors.append(f"Rule {idx}: Public {label} '{ip}' not in allowed GCP ranges.")
                 continue
 
     # Port validation
@@ -119,7 +96,7 @@ def validate_rule(rule, idx=1):
     # CARID in name
     carid = rule["name"].split("-")[2]
     if not validate_carid(carid):
-        errors.append(f"Rule {idx}: CARID must be 9 digits. Found: '{carid}'.")
+        errors.append(f"Rule {idx}: CARID must be 9 digits. Found: '{carid}'")
 
     return errors
 
@@ -163,7 +140,7 @@ def main():
     m_reqid = re.search(r"New Request ID.*?:\s*([A-Z0-9]+)", issue_body, re.IGNORECASE)
     new_reqid = m_reqid.group(1).strip() if m_reqid else None
     if not new_reqid or not validate_reqid(new_reqid):
-        errors.append(f"New REQID must be 'REQ' followed by 7 or 8 digits. Found: '{new_reqid}'.")
+        errors.append(f"New REQID must be 'REQ' followed by 7 or 8 digits. Found: '{new_reqid}'")
 
     # Parse rule blocks
     rule_blocks = parse_blocks(issue_body)
@@ -198,7 +175,7 @@ def main():
     for update in updates:
         rule_name = update["rule_name"]
         if rule_name not in file_map:
-            errors.append(f"Rule {update['idx']}: No rule found in codebase with name '{rule_name}'.")
+            errors.append(f"Rule {update['idx']}: No rule found in codebase with name '{rule_name}'")
             continue
         file = file_map[rule_name]
         updates_by_file.setdefault(file, []).append(update)
@@ -227,10 +204,9 @@ def main():
                 updated_rule = update_rule_fields(to_update, new_fields, new_reqid, new_carid)
 
                 rule_errors = validate_rule(updated_rule, idx=update["idx"])
-                if rule_errors:
-                    errors.extend(rule_errors)
+                if rule_errors: errors.extend(rule_errors)
                 new_rules.append(updated_rule)
-                summaries.append(make_update_summary(update["idx"], rule["name"], rule, update, updated_rule))
+                summaries.append(make_update_summary(update["idx"], rule["name"], rule, updated_rule))
             else:
                 new_rules.append(rule)
 
