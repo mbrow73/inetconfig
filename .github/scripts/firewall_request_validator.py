@@ -7,10 +7,14 @@ import json
 
 # Only these oversized public ranges are allowed
 ALLOWED_PUBLIC_RANGES = [
-    ipaddress.ip_network("35.191.0.0/16"),    # GCP health‑check
-    ipaddress.ip_network("130.211.0.0/22"),   # GCP health‑check
+    ipaddress.ip_network("35.191.0.0/16"),    # GCP health-check
+    ipaddress.ip_network("130.211.0.0/22"),   # GCP health-check
     ipaddress.ip_network("199.36.153.4/30"),  # restricted googleapis
 ]
+
+def is_terraform_safe(s: str) -> bool:
+    # allow only printable ASCII (space … tilde)
+    return all(0x20 <= ord(c) <= 0x7E for c in s)
 
 def validate_reqid(reqid):
     return bool(re.fullmatch(r"REQ\d{7,8}", reqid))
@@ -84,15 +88,13 @@ def rule_is_redundant(rule, rulelist):
             return False
 
     for r in rulelist:
-        if rule["direction"] != r["direction"]:
-            continue
-        if rule["proto"] != r["proto"]:
-            continue
+        if rule["direction"] != r["direction"]: continue
+        if rule["proto"] != r["proto"]:           continue
 
-        srcs_child = [c.strip() for c in rule["src"].split(",")]
-        srcs_parent= [p.strip() for p in r["src"].split(",")]
-        dsts_child = [c.strip() for c in rule["dst"].split(",")]
-        dsts_parent= [p.strip() for p in r["dst"].split(",")]
+        srcs_child  = [c.strip() for c in rule["src"].split(",")]
+        srcs_parent = [p.strip() for p in r["src"].split(",")]
+        dsts_child  = [c.strip() for c in rule["dst"].split(",")]
+        dsts_parent = [p.strip() for p in r["dst"].split(",")]
         ports_child = set(int(p) for p in rule["ports"].split(","))
         ports_parent= set(int(p) for p in r["ports"].split(","))
 
@@ -118,12 +120,16 @@ def main():
     reqid = m.group(1).strip() if m else None
     if not reqid or not validate_reqid(reqid):
         errors.append(f"❌ REQID must be 'REQ' followed by 7–8 digits. Found: '{reqid}'")
+    elif not is_terraform_safe(reqid):
+        errors.append(f"❌ REQID '{reqid}' contains unsupported characters.")
 
     # CARID
     m = re.search(r"CARID.*?:\s*(\d+)", issue, re.IGNORECASE)
     carid = m.group(1).strip() if m else None
     if not carid or not validate_carid(carid):
         errors.append(f"❌ CARID must be exactly 9 digits. Found: '{carid}'")
+    elif not is_terraform_safe(carid):
+        errors.append(f"❌ CARID '{carid}' contains unsupported characters.")
 
     # Rule blocks
     blocks = re.split(r"#### Rule", issue, flags=re.IGNORECASE)[1:]
@@ -139,11 +145,20 @@ def main():
             errors.append(f"❌ Rule {idx}: All fields must be present.")
             continue
 
+        # Terraform‐safe check on each field
+        for name,val in [
+            ("Source", src), ("Destination", dst),
+            ("Ports", ports), ("Protocol", proto),
+            ("Direction", direction), ("Justification", just)
+        ]:
+            if not is_terraform_safe(val):
+                errors.append(f"❌ Rule {idx}: Field '{name}' contains unsupported characters.")
+        
         # protocol
         if proto != proto.lower() or proto not in {"tcp","udp","icmp","sctp"}:
             errors.append(f"❌ Rule {idx}: Protocol must be one of tcp, udp, icmp, sctp (lowercase).")
 
-        # IP/CIDR checks, one message each
+        # IP/CIDR checks (one message each)
         for label, val in [("source", src), ("destination", dst)]:
             for ip in val.split(","):
                 ip = ip.strip()
@@ -152,22 +167,16 @@ def main():
                     continue
 
                 net = ipaddress.ip_network(ip, strict=False)
-
-                # 1) forbid 0.0.0.0/0
                 if net == ipaddress.ip_network("0.0.0.0/0"):
                     errors.append(f"❌ Rule {idx}: {label.capitalize()} may not be 0.0.0.0/0.")
                     continue
-
-                # 2) oversized (> /24) only if in allowed public ranges
                 if net.prefixlen < 24:
                     if not any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES):
                         errors.append(
                             f"❌ Rule {idx}: {label.capitalize()} '{ip}' is /{net.prefixlen}, "
-                            "must be /24 or smaller unless it’s a GCP health‑check range."
+                            "must be /24 or smaller unless it’s a GCP health-check range."
                         )
                     continue
-
-                # 3) other public IP not in ALLOWED_PUBLIC_RANGES
                 if not net.is_private:
                     if not any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES):
                         errors.append(f"❌ Rule {idx}: Public {label} '{ip}' not in allowed GCP ranges.")
