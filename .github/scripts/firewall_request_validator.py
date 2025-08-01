@@ -4,17 +4,7 @@ import sys
 import ipaddress
 import glob
 import json
-
-# Only these oversized public ranges are allowed
-ALLOWED_PUBLIC_RANGES = [
-    ipaddress.ip_network("35.191.0.0/16"),    # GCP health-check
-    ipaddress.ip_network("130.211.0.0/22"),   # GCP health-check
-    ipaddress.ip_network("199.36.153.4/30"),  # restricted googleapis
-]
-
-def is_terraform_safe(s: str) -> bool:
-    # allow only printable ASCII (space … tilde)
-    return all(0x20 <= ord(c) <= 0x7E for c in s)
+from collections import defaultdict
 
 def validate_reqid(reqid):
     return bool(re.fullmatch(r"REQ\d{7,8}", reqid))
@@ -23,20 +13,22 @@ def validate_carid(carid):
     return bool(re.fullmatch(r"\d{9}", carid))
 
 def validate_ip(ip):
+    # Fail if no CIDR mask present
+    if "/" not in ip:
+        return False
     try:
-        if "/" in ip:
-            ipaddress.ip_network(ip, strict=False)
-        else:
-            ipaddress.ip_address(ip)
+        ipaddress.ip_network(ip, strict=False)
         return True
     except:
         return False
 
 def validate_port(port):
     if re.fullmatch(r"\d{1,5}", port):
-        n = int(port); return 1 <= n <= 65535
+        n = int(port)
+        return 1 <= n <= 65535
     if re.fullmatch(r"\d{1,5}-\d{1,5}", port):
-        a, b = map(int, port.split('-')); return 1 <= a <= b <= 65535
+        a, b = map(int, port.split('-'))
+        return 1 <= a <= b <= 65535
     return False
 
 def parse_rule_block(block):
@@ -88,8 +80,10 @@ def rule_is_redundant(rule, rulelist):
             return False
 
     for r in rulelist:
-        if rule["direction"] != r["direction"]: continue
-        if rule["proto"] != r["proto"]:           continue
+        if rule["direction"] != r["direction"]:
+            continue
+        if rule["proto"] != r["proto"]:
+            continue
 
         srcs_child  = [c.strip() for c in rule["src"].split(",")]
         srcs_parent = [p.strip() for p in r["src"].split(",")]
@@ -120,16 +114,12 @@ def main():
     reqid = m.group(1).strip() if m else None
     if not reqid or not validate_reqid(reqid):
         errors.append(f"❌ REQID must be 'REQ' followed by 7–8 digits. Found: '{reqid}'")
-    elif not is_terraform_safe(reqid):
-        errors.append(f"❌ REQID '{reqid}' contains unsupported characters.")
 
     # CARID
     m = re.search(r"CARID.*?:\s*(\d+)", issue, re.IGNORECASE)
     carid = m.group(1).strip() if m else None
     if not carid or not validate_carid(carid):
         errors.append(f"❌ CARID must be exactly 9 digits. Found: '{carid}'")
-    elif not is_terraform_safe(carid):
-        errors.append(f"❌ CARID '{carid}' contains unsupported characters.")
 
     # Rule blocks
     blocks = re.split(r"#### Rule", issue, flags=re.IGNORECASE)[1:]
@@ -145,55 +135,36 @@ def main():
             errors.append(f"❌ Rule {idx}: All fields must be present.")
             continue
 
-        # Terraform‐safe check on each field
-        for name,val in [
-            ("Source", src), ("Destination", dst),
-            ("Ports", ports), ("Protocol", proto),
-            ("Direction", direction), ("Justification", just)
-        ]:
-            if not is_terraform_safe(val):
-                errors.append(f"❌ Rule {idx}: Field '{name}' contains unsupported characters.")
-        
-        # protocol
+        # Protocol
         if proto != proto.lower() or proto not in {"tcp","udp","icmp","sctp"}:
             errors.append(f"❌ Rule {idx}: Protocol must be one of tcp, udp, icmp, sctp (lowercase).")
 
-        # IP/CIDR checks (one message each)
+        # IP/CIDR checks (require slash mask)
         for label, val in [("source", src), ("destination", dst)]:
             for ip in val.split(","):
                 ip = ip.strip()
-                if not validate_ip(ip):
-                    errors.append(f"❌ Rule {idx}: Invalid {label} '{ip}'.")
+                if "/" not in ip:
+                    errors.append(f"❌ Rule {idx}: {label.capitalize()} '{ip}' must include a CIDR mask (e.g. /32).")
+                    continue
+                try:
+                    net = ipaddress.ip_network(ip, strict=False)
+                except:
+                    errors.append(f"❌ Rule {idx}: Invalid {label} IP/CIDR '{ip}'.")
                     continue
 
-                net = ipaddress.ip_network(ip, strict=False)
-                if net == ipaddress.ip_network("0.0.0.0/0"):
-                    errors.append(f"❌ Rule {idx}: {label.capitalize()} may not be 0.0.0.0/0.")
-                    continue
-                if net.prefixlen < 24:
-                    if not any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES):
-                        errors.append(
-                            f"❌ Rule {idx}: {label.capitalize()} '{ip}' is /{net.prefixlen}, "
-                            "must be /24 or smaller unless it’s a GCP health-check range."
-                        )
-                    continue
-                if not net.is_private:
-                    if not any(net.subnet_of(r) for r in ALLOWED_PUBLIC_RANGES):
-                        errors.append(f"❌ Rule {idx}: Public {label} '{ip}' not in allowed GCP ranges.")
-                    continue
-
-        # port checks
+        # Port checks
         for p in ports.split(","):
-            if not validate_port(p.strip()):
-                errors.append(f"❌ Rule {idx}: Invalid port or range '{p.strip()}'.")
+            p = p.strip()
+            if not validate_port(p):
+                errors.append(f"❌ Rule {idx}: Invalid port or range: '{p}'.")
 
-        # duplicate within request
+        # Duplicate within request
         key = (src, dst, ports, proto, direction)
         if key in seen:
             errors.append(f"❌ Rule {idx}: Duplicate rule in request.")
         seen.add(key)
 
-    # global duplicates/redundancy
+    # Global duplicates/redundancy
     existing = parse_existing_rules()
     for idx, blk in enumerate(blocks, 1):
         r = parse_rule_block(blk)
